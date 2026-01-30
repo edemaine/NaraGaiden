@@ -319,6 +319,7 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
 <head>
   <meta charset="utf-8" />
   <title>Nara Feeds</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>
     {css}
   </style>
@@ -369,6 +370,19 @@ class NaraServer(HTTPServer):
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/favicon.svg":
+            icon_path = Path(__file__).resolve().parent / "favicon.svg"
+            if not icon_path.exists():
+                self.send_response(404)
+                self.end_headers()
+                return
+            data = icon_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if parsed.path not in ("/", "/index.html"):
             self.send_response(404)
             self.end_headers()
