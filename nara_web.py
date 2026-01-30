@@ -290,7 +290,7 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
     table {
       border-collapse: collapse;
       width: 100%;
-      font-size: clamp(16px, 1.4vw + 8px, 30px);
+      font-size: clamp(12px, 1.4vw + 8px, 30px);
       table-layout: fixed;
     }
     th, td {
@@ -304,7 +304,7 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
       text-align: center;
       font-family: "Slackey", "Mystery Quest", cursive;
       font-weight: 400;
-      font-size: clamp(18px, 1.8vw + 8px, 36px);
+      font-size: clamp(14px, 1.8vw + 8px, 36px);
     }
     th.group, td.group { border-left: 2px solid #222222; }
     th.time, td.time { text-align: right; }
@@ -318,6 +318,7 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Nara Feeds</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <style>
