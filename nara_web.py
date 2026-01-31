@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from typing import cast, Optional
+from typing import Any, Dict, Optional, cast
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -316,6 +316,66 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
     .col-diaper-type { width: 12%; }
     .col-diaper-time { width: 26%; }
     """.strip()
+    script = """
+    let lastSuccessMs = Date.now();
+    let staleCount = 0;
+
+    function openCleanWindow() {
+      const features = "toolbar=no,location=no,menubar=no,scrollbars=yes,resizable=yes";
+      window.open(window.location.href, "nara_clean", features);
+    }
+
+    function updateStaleNote() {
+      const meta = document.querySelector(".meta");
+      if (!meta) {
+        return;
+      }
+      if (!meta.dataset.base) {
+        meta.dataset.base = meta.textContent || "";
+      }
+      if (staleCount <= 0) {
+        meta.textContent = meta.dataset.base;
+        return;
+      }
+      const minutes = Math.max(1, Math.floor((Date.now() - lastSuccessMs) / 60000));
+      const suffix = minutes === 1 ? "1 minute old" : `${minutes} minutes old`;
+      meta.textContent = `${meta.dataset.base} (${suffix})`;
+    }
+
+    async function refreshContent() {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("_", Date.now().toString());
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          staleCount += 1;
+          updateStaleNote();
+          console.warn("Refresh failed", response.status);
+          return;
+        }
+        const htmlText = await response.text();
+        const parsed = new DOMParser().parseFromString(htmlText, "text/html");
+        const nextContainer = parsed.querySelector(".container");
+        const container = document.querySelector(".container");
+        if (container && nextContainer) {
+          container.innerHTML = nextContainer.innerHTML;
+          lastSuccessMs = Date.now();
+          staleCount = 0;
+          updateStaleNote();
+        } else {
+          staleCount += 1;
+          updateStaleNote();
+          console.warn("Refresh failed: missing container");
+        }
+      } catch (err) {
+        staleCount += 1;
+        updateStaleNote();
+        console.warn("Refresh error", err);
+      }
+    }
+
+    setInterval(refreshContent, 60000);
+    """.strip()
     return f"""<!doctype html>
 <html>
 <head>
@@ -332,36 +392,13 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
     {body_html}
   </div>
   <script>
-    function openCleanWindow() {{
-      const features = "toolbar=no,location=no,menubar=no,scrollbars=yes,resizable=yes";
-      window.open(window.location.href, "nara_clean", features);
-    }}
-
-    async function refreshContent() {{
-      try {{
-        const url = new URL(window.location.href);
-        url.searchParams.set("_", Date.now().toString());
-        const response = await fetch(url, {{ cache: "no-store" }});
-        if (!response.ok) {{
-          return;
-        }}
-        const htmlText = await response.text();
-        const parsed = new DOMParser().parseFromString(htmlText, "text/html");
-        const nextContainer = parsed.querySelector(".container");
-        const container = document.querySelector(".container");
-        if (container && nextContainer) {{
-          container.innerHTML = nextContainer.innerHTML;
-        }}
-      }} catch (err) {{
-        // ignore refresh errors
-      }}
-    }}
-
-    setInterval(refreshContent, 60000);
+    {script}
   </script>
 </body>
 </html>
 """
+
+
 
 
 def build_json(latest_feed, latest_diaper, child_map, generated_at):
@@ -404,6 +441,25 @@ class NaraServer(HTTPServer):
     adb_device: Optional[str]
     nara_db_path: Path
     firebase_db_path: Path
+    cache_ttl: float
+    cache_data: Optional[Dict[str, Any]]
+    cache_time: float
+
+
+def fetch_live_data(server):
+    now = time.time()
+    cache_data = getattr(server, "cache_data", None)
+    cache_time = getattr(server, "cache_time", 0.0)
+    cache_ttl = getattr(server, "cache_ttl", 0.0)
+    if cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
+        return cache_data, False
+
+    adb_pull(server.adb_path, REMOTE_NARA_DB, server.nara_db_path, server.adb_device)
+    adb_pull(server.adb_path, REMOTE_FIREBASE_DB, server.firebase_db_path, server.adb_device)
+    data = collect_live_data(server.nara_db_path, server.firebase_db_path)
+    server.cache_data = data
+    server.cache_time = now
+    return data, False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -429,9 +485,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             server = cast(NaraServer, self.server)
-            adb_pull(server.adb_path, REMOTE_NARA_DB, server.nara_db_path, server.adb_device)
-            adb_pull(server.adb_path, REMOTE_FIREBASE_DB, server.firebase_db_path, server.adb_device)
-            data = collect_live_data(server.nara_db_path, server.firebase_db_path)
+            data, is_stale = fetch_live_data(server)
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
             generated_at = data.get("generatedAt", int(time.time() * 1000))
@@ -506,6 +560,9 @@ def main():
     server.adb_device = args.adb_device
     server.nara_db_path = nara_db_path
     server.firebase_db_path = firebase_db_path
+    server.cache_ttl = float(os.environ.get("NARA_CACHE_TTL", "10"))
+    server.cache_data = None
+    server.cache_time = 0.0
 
     print(f"Serving on http://{args.host}:{args.port}")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
