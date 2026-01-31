@@ -9,9 +9,9 @@ import org.json.JSONObject
 data class NaraGaidenRow(
     val name: String,
     val feedLabel: String,
-    val feedWhen: String,
+    val feedBeginDt: Long?,
     val diaperLabel: String,
-    val diaperWhen: String
+    val diaperBeginDt: Long?
 )
 
 class NaraGaidenWidgetService : RemoteViewsService() {
@@ -42,9 +42,9 @@ class NaraGaidenWidgetFactory(private val context: Context) : RemoteViewsService
                     NaraGaidenRow(
                         name = child.optString("name", "Unknown"),
                         feedLabel = feed?.optString("label", "unknown") ?: "unknown",
-                        feedWhen = feed?.optString("when", "unknown") ?: "unknown",
+                        feedBeginDt = feed?.optLong("beginDt", 0L)?.takeIf { it > 0 },
                         diaperLabel = diaper?.optString("label", "unknown") ?: "unknown",
-                        diaperWhen = diaper?.optString("when", "unknown") ?: "unknown"
+                        diaperBeginDt = diaper?.optLong("beginDt", 0L)?.takeIf { it > 0 }
                     )
                 )
             }
@@ -64,10 +64,45 @@ class NaraGaidenWidgetFactory(private val context: Context) : RemoteViewsService
         val views = RemoteViews(context.packageName, R.layout.widget_row)
         views.setTextViewText(R.id.row_name, row.name)
         views.setTextViewText(R.id.row_feed_label, row.feedLabel)
-        views.setTextViewText(R.id.row_feed_when, row.feedWhen)
+        views.setTextViewText(
+            R.id.row_feed_when,
+            formatRelative(row.feedBeginDt)
+        )
         views.setTextViewText(R.id.row_diaper_label, row.diaperLabel)
-        views.setTextViewText(R.id.row_diaper_when, row.diaperWhen)
+        views.setTextViewText(
+            R.id.row_diaper_when,
+            formatRelative(row.diaperBeginDt)
+        )
         return views
+    }
+
+    private fun formatRelative(beginDt: Long?): String {
+        if (beginDt == null) {
+            return "unknown"
+        }
+        val nowMs = System.currentTimeMillis()
+        val deltaSec = ((nowMs - beginDt) / 1000).coerceAtLeast(0)
+        val mins = deltaSec / 60
+        val hours = mins / 60
+        val days = hours / 24
+
+        val parts = ArrayList<String>()
+        if (days > 0) {
+            parts.add("$days day" + if (days == 1L) "" else "s")
+        }
+        val hoursPart = hours % 24
+        if (hoursPart > 0) {
+            parts.add("$hoursPart hour" + if (hoursPart == 1L) "" else "s")
+        }
+        val minsPart = mins % 60
+        if (minsPart > 0 && days == 0L) {
+            val suffix = if (minsPart == 1L) "" else "s"
+            parts.add("$minsPart min$suffix")
+        }
+        if (parts.isEmpty()) {
+            return "just now"
+        }
+        return parts.joinToString(" ") + " ago"
     }
 
     override fun getLoadingView(): RemoteViews? = null

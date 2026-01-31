@@ -412,8 +412,6 @@ def build_json(latest_feed, latest_diaper, child_map, generated_at):
         name = child_map.get(child_key) or child_key
         feed_ev = latest_feed.get(child_key)
         diaper_ev = latest_diaper.get(child_key)
-        feed_when = format_relative(feed_ev.get("beginDt"), now_ms) if feed_ev else "unknown"
-        diaper_when = format_relative(diaper_ev.get("beginDt"), now_ms) if diaper_ev else "unknown"
         children.append(
             {
                 "id": child_key,
@@ -421,12 +419,10 @@ def build_json(latest_feed, latest_diaper, child_map, generated_at):
                 "feed": {
                     "label": feed_label(feed_ev) if feed_ev else "unknown",
                     "beginDt": feed_ev.get("beginDt") if feed_ev else None,
-                    "when": feed_when,
                 },
                 "diaper": {
                     "label": diaper_label(diaper_ev) if diaper_ev else "unknown",
                     "beginDt": diaper_ev.get("beginDt") if diaper_ev else None,
-                    "when": diaper_when,
                 },
             }
         )
