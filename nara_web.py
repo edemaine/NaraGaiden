@@ -2,6 +2,7 @@
 
 import argparse
 import html
+import json
 import os
 import time
 from typing import cast
@@ -362,6 +363,41 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
 """
 
 
+def build_json(latest_feed, latest_diaper, child_map, generated_at):
+    now_ms = int(time.time() * 1000)
+    child_keys = sorted(
+        latest_feed.keys(),
+        key=lambda key: (child_map.get(key) or key),
+    )
+    children = []
+    for child_key in child_keys:
+        name = child_map.get(child_key) or child_key
+        feed_ev = latest_feed.get(child_key)
+        diaper_ev = latest_diaper.get(child_key)
+        feed_when = format_relative(feed_ev.get("beginDt"), now_ms) if feed_ev else "unknown"
+        diaper_when = format_relative(diaper_ev.get("beginDt"), now_ms) if diaper_ev else "unknown"
+        children.append(
+            {
+                "id": child_key,
+                "name": name,
+                "feed": {
+                    "label": feed_label(feed_ev) if feed_ev else "unknown",
+                    "beginDt": feed_ev.get("beginDt") if feed_ev else None,
+                    "when": feed_when,
+                },
+                "diaper": {
+                    "label": diaper_label(diaper_ev) if diaper_ev else "unknown",
+                    "beginDt": diaper_ev.get("beginDt") if diaper_ev else None,
+                    "when": diaper_when,
+                },
+            }
+        )
+    return {
+        "generatedAt": generated_at,
+        "children": children,
+    }
+
+
 class NaraServer(HTTPServer):
     adb_path: str
     nara_db_path: Path
@@ -384,14 +420,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        if parsed.path not in ("/", "/index.html"):
+        if parsed.path not in ("/", "/index.html", "/json"):
             self.send_response(404)
             self.end_headers()
             return
-
-        params = parse_qs(parsed.query)
-        side = params.get("side", [""])[0]
-        body_class = "bottom" if side == "bottom" else ""
 
         try:
             server = cast(NaraServer, self.server)
@@ -400,11 +432,31 @@ class Handler(BaseHTTPRequestHandler):
             data = collect_live_data(server.nara_db_path, server.firebase_db_path)
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
+            generated_at = data.get("generatedAt", int(time.time() * 1000))
+            if parsed.path == "/json":
+                payload = build_json(
+                    latest_feed,
+                    latest_diaper,
+                    data.get("children", {}),
+                    generated_at,
+                )
+                body_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body_bytes)))
+                self.end_headers()
+                self.wfile.write(body_bytes)
+                return
+
+            params = parse_qs(parsed.query)
+            side = params.get("side", [""])[0]
+            body_class = "bottom" if side == "bottom" else ""
             html_body = build_html(
                 latest_feed,
                 latest_diaper,
                 data.get("children", {}),
-                data.get("generatedAt", int(time.time() * 1000)),
+                generated_at,
                 body_class,
             )
             body_bytes = html_body.encode("utf-8")
