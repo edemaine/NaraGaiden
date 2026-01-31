@@ -16,6 +16,13 @@
         android:textStyle="bold" />
 
     <TextView
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginLeft="6dp"
+        android:layout_marginRight="6dp"
+        android:background="@drawable/widget_divider_vertical" />
+
+    <TextView
         android:id="@+id/row_feed_label"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -24,6 +31,13 @@
         android:maxLines="2"
         android:textColor="@color/widget_text_primary"
         android:textSize="14sp" />
+
+    <TextView
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginLeft="6dp"
+        android:layout_marginRight="6dp"
+        android:background="@drawable/widget_divider_vertical" />
 
     <TextView
         android:id="@+id/row_feed_when"
@@ -36,6 +50,13 @@
         android:textSize="14sp" />
 
     <TextView
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginLeft="6dp"
+        android:layout_marginRight="6dp"
+        android:background="@drawable/widget_divider_vertical" />
+
+    <TextView
         android:id="@+id/row_diaper_label"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -44,6 +65,13 @@
         android:maxLines="2"
         android:textColor="@color/widget_text_primary"
         android:textSize="14sp" />
+
+    <TextView
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginLeft="6dp"
+        android:layout_marginRight="6dp"
+        android:background="@drawable/widget_divider_vertical" />
 
     <TextView
         android:id="@+id/row_diaper_when"
