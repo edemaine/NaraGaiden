@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal">
+
+    <TextView
+        android:id="@+id/row_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:lineSpacingExtra="2dp"
+        android:maxLines="2"
+        android:textColor="@color/widget_text_primary"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/row_feed_label"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.6"
+        android:lineSpacingExtra="2dp"
+        android:maxLines="2"
+        android:textColor="@color/widget_text_primary"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/row_feed_when"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.5"
+        android:lineSpacingExtra="2dp"
+        android:maxLines="2"
+        android:textColor="@color/widget_text_primary"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/row_diaper_label"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.1"
+        android:lineSpacingExtra="2dp"
+        android:maxLines="2"
+        android:textColor="@color/widget_text_primary"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/row_diaper_when"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.5"
+        android:lineSpacingExtra="2dp"
+        android:maxLines="2"
+        android:textColor="@color/widget_text_primary"
+        android:textSize="14sp" />
+</LinearLayout>

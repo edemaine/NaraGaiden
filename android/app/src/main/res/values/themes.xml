@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.NaraGaiden" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#1b1e19</item>
+        <item name="colorPrimaryDark">#0f1110</item>
+        <item name="colorAccent">#93c95f</item>
+    </style>
+</resources>

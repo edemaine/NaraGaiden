@@ -1,0 +1,20 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android Studio
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Local config
+local.properties
+
+# NDK
+.externalNativeBuild/
+
+# Misc
+.DS_Store
+*.swp

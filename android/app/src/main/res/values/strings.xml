@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Nara Gaiden</string>
+    <string name="widget_name">Nara Gaiden</string>
+    <string name="widget_description">Latest feed and diaper times</string>
+    <string name="refresh_widget">Refresh Widget</string>
+    <string name="server_label">Server</string>
+</resources>
