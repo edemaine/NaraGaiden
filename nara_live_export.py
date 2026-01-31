@@ -18,8 +18,12 @@ def run(cmd):
     return result.stdout
 
 
-def adb_pull(adb_path, remote, local):
-    return run([adb_path, "pull", remote, str(local)])
+def adb_pull(adb_path, remote, local, adb_device=None):
+    cmd = [adb_path]
+    if adb_device:
+        cmd.extend(["-s", adb_device])
+    cmd.extend(["pull", remote, str(local)])
+    return run(cmd)
 
 
 def load_json_blob(value):
@@ -129,8 +133,13 @@ def export_live(nara_db_path, firebase_db_path, out_path, limit=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--adb", dest="adb_path", default=os.environ.get("ADB_PATH", "adb"))
+    parser.add_argument("--adb-path", dest="adb_path", default=os.environ.get("ADB_PATH", "adb"))
     parser.add_argument("--out", dest="out_path", default="nara_live.json")
+    parser.add_argument(
+        "--adb-device",
+        dest="adb_device",
+        default=os.environ.get("ADB_DEVICE") or os.environ.get("ANDROID_SERIAL"),
+    )
     parser.add_argument("--limit", dest="limit", type=int, default=None)
     parser.add_argument("--watch", dest="watch", action="store_true")
     parser.add_argument("--interval", dest="interval", type=int, default=60)
@@ -145,8 +154,8 @@ def main():
     out_path = base_dir / args.out_path
 
     while True:
-        adb_pull(args.adb_path, REMOTE_NARA_DB, nara_db_path)
-        adb_pull(args.adb_path, REMOTE_FIREBASE_DB, firebase_db_path)
+        adb_pull(args.adb_path, REMOTE_NARA_DB, nara_db_path, args.adb_device)
+        adb_pull(args.adb_path, REMOTE_FIREBASE_DB, firebase_db_path, args.adb_device)
         export_live(nara_db_path, firebase_db_path, out_path, args.limit)
         if not args.watch:
             break

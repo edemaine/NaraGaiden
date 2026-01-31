@@ -1,11 +1,12 @@
-# usage: python nara_web.py --host 0.0.0.0 --port 8888
+# usage: python nara_web.py --host 0.0.0.0 --port 8888 --adb-device emulator-5554
 
 import argparse
 import html
 import json
+import logging
 import os
 import time
-from typing import cast
+from typing import cast, Optional
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -400,6 +401,7 @@ def build_json(latest_feed, latest_diaper, child_map, generated_at):
 
 class NaraServer(HTTPServer):
     adb_path: str
+    adb_device: Optional[str]
     nara_db_path: Path
     firebase_db_path: Path
 
@@ -427,8 +429,8 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             server = cast(NaraServer, self.server)
-            adb_pull(server.adb_path, REMOTE_NARA_DB, server.nara_db_path)
-            adb_pull(server.adb_path, REMOTE_FIREBASE_DB, server.firebase_db_path)
+            adb_pull(server.adb_path, REMOTE_NARA_DB, server.nara_db_path, server.adb_device)
+            adb_pull(server.adb_path, REMOTE_FIREBASE_DB, server.firebase_db_path, server.adb_device)
             data = collect_live_data(server.nara_db_path, server.firebase_db_path)
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
@@ -465,18 +467,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body_bytes)))
             self.end_headers()
             self.wfile.write(body_bytes)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            return
         except Exception as exc:
+            logging.exception("Request failed for %s", self.path)
             msg = f"Error: {exc}".encode("utf-8")
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(msg)))
-            self.end_headers()
-            self.wfile.write(msg)
+            try:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(msg)))
+                self.end_headers()
+                self.wfile.write(msg)
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                return
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--adb", dest="adb_path", default=os.environ.get("ADB_PATH", "adb"))
+    parser.add_argument("--adb-path", dest="adb_path", default=os.environ.get("ADB_PATH", "adb"))
+    parser.add_argument(
+        "--adb-device",
+        dest="adb_device",
+        default=os.environ.get("ADB_DEVICE") or os.environ.get("ANDROID_SERIAL"),
+    )
     parser.add_argument("--host", dest="host", default="127.0.0.1")
     parser.add_argument("--port", dest="port", type=int, default=8787)
     args = parser.parse_args()
@@ -490,10 +503,12 @@ def main():
 
     server = NaraServer((args.host, args.port), Handler)
     server.adb_path = args.adb_path
+    server.adb_device = args.adb_device
     server.nara_db_path = nara_db_path
     server.firebase_db_path = firebase_db_path
 
     print(f"Serving on http://{args.host}:{args.port}")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     server.serve_forever()
 
 
