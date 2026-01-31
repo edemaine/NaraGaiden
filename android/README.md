@@ -42,6 +42,7 @@ the server (via `/json` API endpoint).
    - Install Good Lock and LockStar from Galaxy Store.
    - Enable lock screen widgets in LockStar.
    - Add the Nara Gaiden widget to your LockStar layout.
+   - Note: Requires One UI 8.0 or newer for lock screen rendering.
 
 ## Notes
 
