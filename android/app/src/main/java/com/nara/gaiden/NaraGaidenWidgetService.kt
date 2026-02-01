@@ -2,8 +2,11 @@ package com.nara.gaiden
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
+import kotlin.math.max
+import kotlin.math.roundToInt
 import org.json.JSONObject
 
 data class NaraGaidenRow(
@@ -73,6 +76,8 @@ class NaraGaidenWidgetFactory(private val context: Context) : RemoteViewsService
             R.id.row_diaper_when,
             formatRelative(row.diaperBeginDt)
         )
+        applyTimeColors(views, R.id.row_feed_when, row.feedBeginDt)
+        applyTimeColors(views, R.id.row_diaper_when, row.diaperBeginDt)
         return views
     }
 
@@ -103,6 +108,53 @@ class NaraGaidenWidgetFactory(private val context: Context) : RemoteViewsService
             return "just now"
         }
         return parts.joinToString(" ") + " ago"
+    }
+
+    private fun applyTimeColors(views: RemoteViews, viewId: Int, beginDt: Long?) {
+        val colors = timeColors(beginDt)
+        views.setInt(viewId, "setBackgroundColor", colors.bg)
+        views.setTextColor(viewId, colors.fg)
+    }
+
+    private data class TimeColors(val bg: Int, val fg: Int)
+
+    private fun timeColors(beginDt: Long?): TimeColors {
+        if (beginDt == null) {
+            return TimeColors(Color.parseColor("#333333"), Color.parseColor("#f2f2f2"))
+        }
+        val nowMs = System.currentTimeMillis()
+        val deltaHours = max(0.0, (nowMs - beginDt) / 3600000.0)
+
+        val stops = listOf(
+            1.0 to intArrayOf(27, 94, 32),
+            2.0 to intArrayOf(133, 100, 18),
+            3.0 to intArrayOf(121, 69, 0),
+            4.0 to intArrayOf(122, 28, 28),
+        )
+
+        val rgb = when {
+            deltaHours <= 1.0 -> stops[0].second
+            deltaHours >= 4.0 -> stops.last().second
+            else -> {
+                var color = stops.last().second
+                for (i in 0 until stops.size - 1) {
+                    val (h0, c0) = stops[i]
+                    val (h1, c1) = stops[i + 1]
+                    if (deltaHours <= h1) {
+                        val t = (deltaHours - h0) / (h1 - h0)
+                        color = intArrayOf(
+                            (c0[0] + (c1[0] - c0[0]) * t).roundToInt(),
+                            (c0[1] + (c1[1] - c0[1]) * t).roundToInt(),
+                            (c0[2] + (c1[2] - c0[2]) * t).roundToInt(),
+                        )
+                        break
+                    }
+                }
+                color
+            }
+        }
+
+        return TimeColors(Color.rgb(rgb[0], rgb[1], rgb[2]), Color.WHITE)
     }
 
     override fun getLoadingView(): RemoteViews? = null
