@@ -96,15 +96,20 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:text="Updated: --"
             android:textColor="@color/widget_text_secondary"
             android:textSize="13sp" />
 
         <TextView
             android:id="@+id/widget_status"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginRight="10dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:text=""
             android:textColor="@color/widget_text_secondary"
             android:textSize="13sp" />
@@ -114,12 +119,12 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/widget_refresh_bg"
-            android:paddingLeft="12dp"
-            android:paddingRight="12dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:text="@string/refresh_widget"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:text="⟳"
             android:textColor="@color/widget_text_primary"
-            android:textSize="13sp" />
+            android:textSize="16sp" />
     </LinearLayout>
 </LinearLayout>
