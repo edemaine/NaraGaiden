@@ -28,6 +28,7 @@
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.nara.gaiden.ACTION_REFRESH" />
+                <action android:name="com.nara.gaiden.ACTION_TICK" />
             </intent-filter>
 
             <meta-data

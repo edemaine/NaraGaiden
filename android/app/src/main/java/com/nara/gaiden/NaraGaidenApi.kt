@@ -26,6 +26,13 @@ data class NaraGaidenWidgetState(
             )
         }
 
+        fun idle(lastUpdated: String?): NaraGaidenWidgetState {
+            return NaraGaidenWidgetState(
+                statusLine = "",
+                updatedLine = lastUpdated ?: "Updated: --"
+            )
+        }
+
         fun ready(updatedLine: String): NaraGaidenWidgetState {
             return NaraGaidenWidgetState(
                 statusLine = "Nara Gaiden",
