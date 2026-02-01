@@ -215,7 +215,7 @@ def build_body(latest_feed, latest_diaper, child_map, generated_at):
             "</tr>"
         )
 
-    generated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(generated_at / 1000))
+    generated = time.strftime("%Y-%m-%d %H:%M", time.localtime(generated_at / 1000))
     rows_html = "\n".join(rows) or "<tr><td colspan=\"5\">No feeds found</td></tr>"
     return f"""
     <table>
@@ -239,7 +239,7 @@ def build_body(latest_feed, latest_diaper, child_map, generated_at):
     </table>
     <div class=\"actions\">
       <button class=\"btn\" onclick=\"openCleanWindow()\">Open Window</button>
-      <div class=\"meta\">Updated: {html.escape(generated)}</div>
+      <div class=\"meta\">as of {html.escape(generated)}</div>
     </div>
     """.strip()
 
@@ -318,7 +318,7 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
     """.strip()
     script = """
     let lastSuccessMs = Date.now();
-    let staleCount = 0;
+    let staleActive = false;
 
     function openCleanWindow() {
       const features = "toolbar=no,location=no,menubar=no,scrollbars=yes,resizable=yes";
@@ -333,12 +333,16 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
       if (!meta.dataset.base) {
         meta.dataset.base = meta.textContent || "";
       }
-      if (staleCount <= 0) {
+      if (!staleActive) {
         meta.textContent = meta.dataset.base;
         return;
       }
-      const minutes = Math.max(1, Math.floor((Date.now() - lastSuccessMs) / 60000));
-      const suffix = minutes === 1 ? "1 minute old" : `${minutes} minutes old`;
+      const minutes = Math.max(0, Math.floor((Date.now() - lastSuccessMs) / 60000));
+      if (minutes === 0) {
+        meta.textContent = meta.dataset.base;
+        return;
+      }
+      const suffix = minutes === 1 ? "1 min old" : `${minutes} mins old`;
       meta.textContent = `${meta.dataset.base} (${suffix})`;
     }
 
@@ -348,7 +352,7 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
         url.searchParams.set("_", Date.now().toString());
         const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) {
-          staleCount += 1;
+          staleActive = true;
           updateStaleNote();
           console.warn("Refresh failed", response.status);
           return;
@@ -360,15 +364,15 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
         if (container && nextContainer) {
           container.innerHTML = nextContainer.innerHTML;
           lastSuccessMs = Date.now();
-          staleCount = 0;
+          staleActive = false;
           updateStaleNote();
         } else {
-          staleCount += 1;
+          staleActive = true;
           updateStaleNote();
           console.warn("Refresh failed: missing container");
         }
       } catch (err) {
-        staleCount += 1;
+        staleActive = true;
         updateStaleNote();
         console.warn("Refresh error", err);
       }

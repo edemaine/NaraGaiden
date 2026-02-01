@@ -72,9 +72,9 @@ object NaraGaidenApi {
 
     private fun formatUpdated(generatedAt: Long): String {
         if (generatedAt <= 0) {
-            return "Updated: unknown"
+            return "as of unknown"
         }
         val formatted = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(generatedAt))
-        return "Updated: $formatted"
+        return "as of $formatted"
     }
 }

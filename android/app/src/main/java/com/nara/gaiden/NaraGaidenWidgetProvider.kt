@@ -48,21 +48,36 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
     ) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lastUpdated = prefs.getString(KEY_UPDATED, null)
-        val loadingViews = buildRemoteViews(context, NaraGaidenWidgetState.loading(lastUpdated))
+        val lastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
+        val baseUpdated = lastUpdated ?: "as of --"
+        val loadingUpdated = withStaleSuffix(baseUpdated, lastSuccessMs, include = true)
+        val loadingViews = buildRemoteViews(context, NaraGaidenWidgetState.loading(loadingUpdated))
         appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, loadingViews) }
         appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
 
         Thread {
             val state = try {
                 val result = NaraGaidenApi.fetch()
+                val successMs = System.currentTimeMillis()
                 prefs.edit {
                     putString(KEY_JSON, result.json)
                     putString(KEY_UPDATED, result.updatedLine)
+                    putLong(KEY_LAST_SUCCESS_MS, successMs)
+                    putBoolean(KEY_LAST_ERROR, false)
                 }
                 NaraGaidenWidgetState.ready(result.updatedLine)
             } catch (e: Exception) {
                 val fallbackUpdated = prefs.getString(KEY_UPDATED, null)
-                NaraGaidenWidgetState.error(e.message ?: "Fetch failed", fallbackUpdated)
+                val storedLastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
+                val updatedLine = withStaleSuffix(
+                    fallbackUpdated ?: "as of --",
+                    storedLastSuccessMs,
+                    include = true
+                )
+                prefs.edit {
+                    putBoolean(KEY_LAST_ERROR, true)
+                }
+                NaraGaidenWidgetState.error(e.message ?: "Fetch failed", updatedLine)
             }
             val views = buildRemoteViews(context, state)
             appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, views) }
@@ -77,7 +92,11 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
     ) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lastUpdated = prefs.getString(KEY_UPDATED, null)
-        val views = buildRemoteViews(context, NaraGaidenWidgetState.idle(lastUpdated))
+        val lastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
+        val lastError = prefs.getBoolean(KEY_LAST_ERROR, false)
+        val baseUpdated = lastUpdated ?: "as of --"
+        val updatedLine = withStaleSuffix(baseUpdated, lastSuccessMs, include = lastError)
+        val views = buildRemoteViews(context, NaraGaidenWidgetState.idle(updatedLine))
         appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, views) }
         appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
     }
@@ -132,12 +151,26 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         )
     }
 
+    private fun withStaleSuffix(updatedLine: String, lastSuccessMs: Long, include: Boolean): String {
+        if (!include || lastSuccessMs <= 0) {
+            return updatedLine
+        }
+        val minutes = ((System.currentTimeMillis() - lastSuccessMs) / 60000).coerceAtLeast(0)
+        if (minutes == 0L) {
+            return updatedLine
+        }
+        val suffix = if (minutes == 1L) "1 min old" else "$minutes mins old"
+        return "$updatedLine ($suffix)"
+    }
+
     companion object {
         const val ACTION_REFRESH = "com.nara.gaiden.ACTION_REFRESH"
         const val ACTION_TICK = "com.nara.gaiden.ACTION_TICK"
         private const val PREFS_NAME = "nara_gaiden_widget"
         private const val KEY_JSON = "last_json"
         private const val KEY_UPDATED = "last_updated"
+        private const val KEY_LAST_SUCCESS_MS = "last_success_ms"
+        private const val KEY_LAST_ERROR = "last_error"
         private const val TICK_INTERVAL_MS = 5 * 60 * 1000L
     }
 }
