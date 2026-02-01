@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.SystemClock
 import android.widget.RemoteViews
 import androidx.core.content.edit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class NaraGaidenWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
@@ -46,6 +47,9 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
+        if (!refreshInFlight.compareAndSet(false, true)) {
+            return
+        }
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lastUpdated = prefs.getString(KEY_UPDATED, null)
         val lastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
@@ -56,32 +60,36 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
 
         Thread {
-            val state = try {
-                val result = NaraGaidenApi.fetch()
-                val successMs = System.currentTimeMillis()
-                prefs.edit {
-                    putString(KEY_JSON, result.json)
-                    putString(KEY_UPDATED, result.updatedLine)
-                    putLong(KEY_LAST_SUCCESS_MS, successMs)
-                    putBoolean(KEY_LAST_ERROR, false)
+            try {
+                val state = try {
+                    val result = NaraGaidenApi.fetch()
+                    val successMs = System.currentTimeMillis()
+                    prefs.edit {
+                        putString(KEY_JSON, result.json)
+                        putString(KEY_UPDATED, result.updatedLine)
+                        putLong(KEY_LAST_SUCCESS_MS, successMs)
+                        putBoolean(KEY_LAST_ERROR, false)
+                    }
+                    NaraGaidenWidgetState.ready(result.updatedLine)
+                } catch (e: Exception) {
+                    val fallbackUpdated = prefs.getString(KEY_UPDATED, null)
+                    val storedLastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
+                    val updatedLine = withStaleSuffix(
+                        fallbackUpdated ?: "as of --",
+                        storedLastSuccessMs,
+                        include = true
+                    )
+                    prefs.edit {
+                        putBoolean(KEY_LAST_ERROR, true)
+                    }
+                    NaraGaidenWidgetState.error(e.message ?: "Fetch failed", updatedLine)
                 }
-                NaraGaidenWidgetState.ready(result.updatedLine)
-            } catch (e: Exception) {
-                val fallbackUpdated = prefs.getString(KEY_UPDATED, null)
-                val storedLastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
-                val updatedLine = withStaleSuffix(
-                    fallbackUpdated ?: "as of --",
-                    storedLastSuccessMs,
-                    include = true
-                )
-                prefs.edit {
-                    putBoolean(KEY_LAST_ERROR, true)
-                }
-                NaraGaidenWidgetState.error(e.message ?: "Fetch failed", updatedLine)
+                val views = buildRemoteViews(context, state)
+                appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, views) }
+                appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
+            } finally {
+                refreshInFlight.set(false)
             }
-            val views = buildRemoteViews(context, state)
-            appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, views) }
-            appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
         }.start()
     }
 
@@ -172,5 +180,6 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         private const val KEY_LAST_SUCCESS_MS = "last_success_ms"
         private const val KEY_LAST_ERROR = "last_error"
         private const val TICK_INTERVAL_MS = 5 * 60 * 1000L
+        private val refreshInFlight = AtomicBoolean(false)
     }
 }
