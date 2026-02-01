@@ -18,12 +18,23 @@ def run(cmd):
     return result.stdout
 
 
-def adb_pull(adb_path, remote, local, adb_device=None):
+def adb_pull(adb_path, remote, local, adb_device=None, retries=2, retry_delay=0.5):
     cmd = [adb_path]
     if adb_device:
         cmd.extend(["-s", adb_device])
     cmd.extend(["pull", remote, str(local)])
-    return run(cmd)
+
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            return run(cmd)
+        except RuntimeError as exc:
+            last_exc = exc
+            if attempt >= retries:
+                break
+            time.sleep(retry_delay * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
 
 
 def load_json_blob(value):
