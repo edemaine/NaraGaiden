@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0b0b"/>
+      <stop offset="1" stop-color="#121212"/>
+    </linearGradient>
+    <linearGradient id="bottleBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#080808"/>
+      <stop offset="1" stop-color="#aaaaaa"/>
+    </linearGradient>
+    <linearGradient id="bottleFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#080808"/>
+      <stop offset="1" stop-color="#dddddd"/>
+    </linearGradient>
+    <linearGradient id="milk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff7e6"/>
+      <stop offset="1" stop-color="#e7ddc8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" fill="url(#bg)"/>
+
+  <g opacity="0.85">
+    <rect x="10" y="18" width="16" height="34" rx="6" fill="url(#bottleBack)" stroke="#f2f2f2" stroke-width="2"/>
+    <rect x="13" y="12" width="10" height="8" rx="3" fill="url(#bottleBack)" stroke="#f2f2f2" stroke-width="2"/>
+    <rect x="13" y="28" width="10" height="18" rx="4" fill="url(#milk)"/>
+    <path d="M13 30c2-2 6-2 10 0v2H13z" fill="#ffffff" opacity="0.35"/>
+  </g>
+
+  <g opacity="0.85">
+    <rect x="38" y="18" width="16" height="34" rx="6" fill="url(#bottleBack)" stroke="#f2f2f2" stroke-width="2"/>
+    <rect x="41" y="12" width="10" height="8" rx="3" fill="url(#bottleBack)" stroke="#f2f2f2" stroke-width="2"/>
+    <rect x="41" y="28" width="10" height="18" rx="4" fill="url(#milk)"/>
+    <path d="M41 30c2-2 6-2 10 0v2H41z" fill="#ffffff" opacity="0.35"/>
+  </g>
+
+  <g>
+    <rect x="22" y="14" width="20" height="43" rx="7" fill="url(#bottleFront)" stroke="#ffffff" stroke-width="2"/>
+    <rect x="26" y="8" width="12" height="8" rx="3" fill="url(#bottleFront)" stroke="#ffffff" stroke-width="2"/>
+    <rect x="26" y="26" width="12" height="20" rx="5" fill="url(#milk)"/>
+    <path d="M26 29c3-2 6-2 12 0v2H26z" fill="#ffffff" opacity="0.35"/>
+  </g>
+</svg>

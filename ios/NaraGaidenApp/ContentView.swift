@@ -1,0 +1,76 @@
+import SwiftUI
+import WidgetKit
+
+struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var status = "Idle"
+    @State private var lastUpdated: Date?
+    @State private var isFetching = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Nara Gaiden")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Text("Server: \(NaraConfig.serverURLString)")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+
+            if let lastUpdated {
+                Text("Last fetch: \(lastUpdated.formatted(date: .numeric, time: .standard))")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+
+            Text("Status: \(status)")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+
+            HStack(spacing: 12) {
+                Button("Fetch Now") {
+                    Task {
+                        await fetchAndReload()
+                    }
+                }
+
+                Button("Reload Widget") {
+                    WidgetCenter.shared.reloadTimelines(ofKind: "NaraGaidenLockWidget")
+                }
+            }
+        }
+        .padding()
+        .task {
+            await fetchAndReload()
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else {
+                return
+            }
+            Task {
+                await fetchAndReload()
+            }
+        }
+    }
+
+    private func fetchAndReload() async {
+        guard !isFetching else {
+            return
+        }
+        isFetching = true
+        status = "Loading"
+        do {
+            let payload = try await NaraAPI.fetch()
+            status = "Loaded \(payload.children.count) children"
+            lastUpdated = Date()
+            WidgetCenter.shared.reloadTimelines(ofKind: "NaraGaidenLockWidget")
+        } catch {
+            status = "Error: \(error.localizedDescription)"
+        }
+        isFetching = false
+    }
+}
+
+#Preview {
+    ContentView()
+}
