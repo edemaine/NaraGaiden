@@ -93,6 +93,7 @@ struct NaraGaidenLockWidgetEntryView: View {
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, verticalPadding)
+        .widgetContainerBackground()
     }
 
     private func tableView(payload: NaraPayload) -> some View {
@@ -200,7 +201,7 @@ struct NaraGaidenLockWidgetEntryView: View {
     }
 
     private var verticalPadding: CGFloat {
-        family == .systemMedium ? -6 : 4
+        family == .systemMedium ? -8 : 4
     }
 
     private var babyColumnRatio: CGFloat {
@@ -309,6 +310,19 @@ struct NaraGaidenLockWidget: Widget {
         .configurationDisplayName("Nara Gaiden")
         .description("Latest feed and diaper times.")
         .supportedFamilies([.accessoryRectangular, .systemMedium])
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func widgetContainerBackground() -> some View {
+        if #available(iOS 17.0, *) {
+            self.containerBackground(for: .widget) {
+                ContainerRelativeShape().fill(.background)
+            }
+        } else {
+            self
+        }
     }
 }
 
