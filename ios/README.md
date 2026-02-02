@@ -14,3 +14,24 @@ Load `NaraGaiden.xcodeproj` with Xcode.
 
 - Start the server: `python nara_web.py --host 0.0.0.0 --port 8787`
 - Confirm the endpoint is reachable from your device: `http://<host>:8787/json`
+
+## Deploy to a Phone
+
+- Connect your iPhone via USB and unlock it; trust the computer if prompted.
+- On the phone: Settings -> Privacy & Security -> Developer Mode -> enable it (required on recent iOS).
+- Open `ios/NaraGaiden.xcodeproj` in Xcode.
+- Select the `NaraGaidenApp` target -> "Signing & Capabilities" -> set Team to your Apple ID and choose a unique Bundle Identifier.
+- In the scheme selector, choose your iPhone (not a simulator).
+- Press Run (Cmd+R) to install the app on your phone.
+- Add the widget: long-press the Home Screen -> "+" -> search "Nara Gaiden" -> add.
+
+If Xcode complains about signing:
+
+- Xcode -> Settings -> Accounts -> add your Apple ID.
+- In the target's "Signing & Capabilities", make sure "Automatically manage signing" is on.
+
+If the phone says "Untrusted Developer":
+
+- Settings -> General -> VPN & Device Management (or Profiles & Device Management).
+- Under "Developer App", tap your Apple ID.
+- Tap "Trust" and confirm, then relaunch the app.
