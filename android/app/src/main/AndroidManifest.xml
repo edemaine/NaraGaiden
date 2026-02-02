@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.nara.gaiden">
 
+    <queries>
+        <package android:name="com.naraorganics.nara" />
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
