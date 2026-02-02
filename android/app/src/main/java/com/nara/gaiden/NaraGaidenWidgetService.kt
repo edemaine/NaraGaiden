@@ -14,7 +14,8 @@ data class NaraGaidenRow(
     val feedLabel: String,
     val feedBeginDt: Long?,
     val diaperLabel: String,
-    val diaperBeginDt: Long?
+    val diaperBeginDt: Long?,
+    val vitaminsToday: Boolean
 )
 
 class NaraGaidenWidgetService : RemoteViewsService() {
@@ -47,7 +48,8 @@ class NaraGaidenWidgetFactory(private val context: Context) : RemoteViewsService
                         feedLabel = feed?.optString("label", "unknown") ?: "unknown",
                         feedBeginDt = feed?.optLong("beginDt", 0L)?.takeIf { it > 0 },
                         diaperLabel = diaper?.optString("label", "unknown") ?: "unknown",
-                        diaperBeginDt = diaper?.optLong("beginDt", 0L)?.takeIf { it > 0 }
+                        diaperBeginDt = diaper?.optLong("beginDt", 0L)?.takeIf { it > 0 },
+                        vitaminsToday = child.optBoolean("vitaminsToday", false)
                     )
                 )
             }
@@ -65,7 +67,8 @@ class NaraGaidenWidgetFactory(private val context: Context) : RemoteViewsService
     override fun getViewAt(position: Int): RemoteViews {
         val row = rows[position]
         val views = RemoteViews(context.packageName, R.layout.widget_row)
-        views.setTextViewText(R.id.row_name, row.name)
+        val name = if (row.vitaminsToday) "${row.name} 💊" else row.name
+        views.setTextViewText(R.id.row_name, name)
         views.setTextViewText(R.id.row_feed_label, row.feedLabel)
         views.setTextViewText(
             R.id.row_feed_when,

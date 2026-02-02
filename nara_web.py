@@ -89,6 +89,39 @@ def latest_by_group(events, group_key):
     return latest
 
 
+def local_midnight_ms(now_ms=None):
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    now_sec = now_ms / 1000.0
+    local = time.localtime(now_sec)
+    midnight_sec = time.mktime(
+        (local.tm_year, local.tm_mon, local.tm_mday, 0, 0, 0, 0, 0, -1)
+    )
+    return int(midnight_sec * 1000)
+
+
+def vitamins_today(events, now_ms=None):
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    midnight_ms = local_midnight_ms(now_ms)
+    result = {}
+    for ev in events:
+        if ev.get("trackGroupKey") != "ROUTINE":
+            continue
+        payload = ev.get("payload") or {}
+        name = payload.get("routineName") or ""
+        if "vitamin" not in str(name).lower():
+            continue
+        begin = ev.get("beginDt")
+        if begin is None or int(begin) < midnight_ms:
+            continue
+        child_key = ev.get("childKey")
+        if not child_key:
+            continue
+        result[child_key] = True
+    return result
+
+
 def feed_label(ev):
     t = ev.get("trackTypeKey") or "FEED"
     payload = ev.get("payload") or {}
@@ -185,8 +218,10 @@ def diaper_label(ev):
     return "/".join(parts) if parts else "Diaper"
 
 
-def build_body(latest_feed, latest_diaper, child_map, generated_at):
+def build_body(latest_feed, latest_diaper, child_map, generated_at, vitamins=None):
     now_ms = int(time.time() * 1000)
+    if vitamins is None:
+        vitamins = {}
     rows = []
     child_keys = sorted(
         ## Skip babies with no latest feed (dogs):
@@ -197,6 +232,9 @@ def build_body(latest_feed, latest_diaper, child_map, generated_at):
     )
     for child_key in child_keys:
         name = child_map.get(child_key) or child_key
+        name_html = html.escape(name)
+        if vitamins.get(child_key):
+            name_html += " &#128138;"
         feed_ev = latest_feed.get(child_key)
         diaper_ev = latest_diaper.get(child_key)
         feed_when = format_relative(feed_ev.get("beginDt"), now_ms) if feed_ev else "unknown"
@@ -207,7 +245,7 @@ def build_body(latest_feed, latest_diaper, child_map, generated_at):
         diaper_bg, diaper_fg = time_colors(diaper_ev.get("beginDt") if diaper_ev else None, now_ms)
         rows.append(
             "<tr>"
-            f"<td class=\"group\">{html.escape(name)}</td>"
+            f"<td class=\"group\">{name_html}</td>"
             f"<td class=\"group\">{html.escape(feed_text)}</td>"
             f"<td class=\"time\" style=\"background:{feed_bg}; color:{feed_fg};\">{html.escape(feed_when)}</td>"
             f"<td class=\"group\">{html.escape(diaper_text)}</td>"
@@ -244,8 +282,8 @@ def build_body(latest_feed, latest_diaper, child_map, generated_at):
     """.strip()
 
 
-def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class=""):
-    body_html = build_body(latest_feed, latest_diaper, child_map, generated_at)
+def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="", vitamins=None):
+    body_html = build_body(latest_feed, latest_diaper, child_map, generated_at, vitamins)
     css = """
     @import url("https://fonts.googleapis.com/css2?family=Mystery+Quest&family=Slackey&display=swap");
     @view-transition { navigation: auto; }
@@ -405,8 +443,9 @@ def build_html(latest_feed, latest_diaper, child_map, generated_at, body_class="
 
 
 
-def build_json(latest_feed, latest_diaper, child_map, generated_at):
-    now_ms = int(time.time() * 1000)
+def build_json(latest_feed, latest_diaper, child_map, generated_at, vitamins=None):
+    if vitamins is None:
+        vitamins = {}
     child_keys = sorted(
         latest_feed.keys(),
         key=lambda key: (child_map.get(key) or key),
@@ -420,6 +459,7 @@ def build_json(latest_feed, latest_diaper, child_map, generated_at):
             {
                 "id": child_key,
                 "name": name,
+                "vitaminsToday": bool(vitamins.get(child_key)),
                 "feed": {
                     "label": feed_label(feed_ev) if feed_ev else "unknown",
                     "beginDt": feed_ev.get("beginDt") if feed_ev else None,
@@ -489,12 +529,14 @@ class Handler(BaseHTTPRequestHandler):
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
             generated_at = data.get("generatedAt", int(time.time() * 1000))
+            vitamins = vitamins_today(data.get("events", []))
             if parsed.path == "/json":
                 payload = build_json(
                     latest_feed,
                     latest_diaper,
                     data.get("children", {}),
                     generated_at,
+                    vitamins,
                 )
                 body_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
                 self.send_response(200)
@@ -514,6 +556,7 @@ class Handler(BaseHTTPRequestHandler):
                 data.get("children", {}),
                 generated_at,
                 body_class,
+                vitamins,
             )
             body_bytes = html_body.encode("utf-8")
             self.send_response(200)
