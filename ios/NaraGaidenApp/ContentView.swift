@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import WidgetKit
 
@@ -49,8 +50,8 @@ struct ContentView: View {
         .task {
             await fetchAndReload()
         }
-        .onChange(of: scenePhase) { phase in
-            guard phase == .active else {
+        .onChange(of: scenePhase) {
+            guard scenePhase == .active else {
                 return
             }
             Task {
