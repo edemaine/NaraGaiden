@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var status = "Idle"
     @State private var lastUpdated: Date?
     @State private var isFetching = false
+    @State private var payload: NaraPayload?
+    private let refreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -34,6 +36,14 @@ struct ContentView: View {
                     }
                 }
             }
+
+            if let payload {
+                NaraAppPreview(payload: payload)
+            } else {
+                Text("No data")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
         }
         .padding()
         .task {
@@ -41,6 +51,14 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else {
+                return
+            }
+            Task {
+                await fetchAndReload()
+            }
+        }
+        .onReceive(refreshTimer) { _ in
+            guard scenePhase == .active else {
                 return
             }
             Task {
@@ -60,6 +78,7 @@ struct ContentView: View {
             let payload = try await NaraAPI.fetch()
             status = "Loaded \(payload.children.count) children"
             lastUpdated = Date()
+            self.payload = payload
             WidgetCenter.shared.reloadTimelines(ofKind: "NaraGaidenLockWidget")
         } catch {
             status = "Error: \(error.localizedDescription)"

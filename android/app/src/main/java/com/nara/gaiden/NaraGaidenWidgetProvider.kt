@@ -52,10 +52,10 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         if (!refreshInFlight.compareAndSet(false, true)) {
             return
         }
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit { putLong(KEY_ARMED_MS, 0L) }
-        val lastUpdated = prefs.getString(KEY_UPDATED, null)
-        val lastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
+        val lastUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
+        val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
         val baseUpdated = lastUpdated ?: "as of --"
         val loadingUpdated = withStaleSuffix(baseUpdated, lastSuccessMs, include = true)
         val loadingViews = buildRemoteViews(context, NaraGaidenWidgetState.loading(loadingUpdated))
@@ -68,22 +68,22 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
                     val result = NaraGaidenApi.fetch()
                     val successMs = System.currentTimeMillis()
                     prefs.edit {
-                        putString(KEY_JSON, result.json)
-                        putString(KEY_UPDATED, result.updatedLine)
-                        putLong(KEY_LAST_SUCCESS_MS, successMs)
-                        putBoolean(KEY_LAST_ERROR, false)
+                        putString(NaraGaidenStore.KEY_JSON, result.json)
+                        putString(NaraGaidenStore.KEY_UPDATED, result.updatedLine)
+                        putLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, successMs)
+                        putBoolean(NaraGaidenStore.KEY_LAST_ERROR, false)
                     }
                     NaraGaidenWidgetState.ready(result.updatedLine)
                 } catch (e: Exception) {
-                    val fallbackUpdated = prefs.getString(KEY_UPDATED, null)
-                    val storedLastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
+                    val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
+                    val storedLastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
                     val updatedLine = withStaleSuffix(
                         fallbackUpdated ?: "as of --",
                         storedLastSuccessMs,
                         include = true
                     )
                     prefs.edit {
-                        putBoolean(KEY_LAST_ERROR, true)
+                        putBoolean(NaraGaidenStore.KEY_LAST_ERROR, true)
                     }
                     NaraGaidenWidgetState.error(e.message ?: "Fetch failed", updatedLine)
                 }
@@ -101,10 +101,10 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val lastUpdated = prefs.getString(KEY_UPDATED, null)
-        val lastSuccessMs = prefs.getLong(KEY_LAST_SUCCESS_MS, 0L)
-        val lastError = prefs.getBoolean(KEY_LAST_ERROR, false)
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        val lastUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
+        val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
+        val lastError = prefs.getBoolean(NaraGaidenStore.KEY_LAST_ERROR, false)
         val baseUpdated = lastUpdated ?: "as of --"
         val updatedLine = withStaleSuffix(baseUpdated, lastSuccessMs, include = lastError)
         val views = buildRemoteViews(context, NaraGaidenWidgetState.idle(updatedLine))
@@ -121,7 +121,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         views.setRemoteAdapter(R.id.widget_list, serviceIntent)
         views.setEmptyView(R.id.widget_list, R.id.widget_empty)
 
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         val armed = getArmedState(prefs)
         views.setTextViewText(R.id.widget_open, if (armed) "⇗" else "↗")
 
@@ -154,19 +154,19 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
-        val armedMs = prefs.getLong(KEY_ARMED_MS, 0L)
+        val armedMs = prefs.getLong(NaraGaidenStore.KEY_ARMED_MS, 0L)
         val isArmed = armedMs > 0 && now - armedMs <= ARM_WINDOW_MS
 
         if (isArmed) {
-            prefs.edit { putLong(KEY_ARMED_MS, 0L) }
+            prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
             updateOpenUi(context, appWidgetManager, appWidgetIds, showPrompt = false)
             launchNaraApp(context)
             return
         }
 
-        prefs.edit { putLong(KEY_ARMED_MS, now) }
+        prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, now) }
         updateOpenUi(context, appWidgetManager, appWidgetIds, showPrompt = true)
     }
 
@@ -176,7 +176,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         appWidgetIds: IntArray,
         showPrompt: Boolean
     ) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         val armed = getArmedState(prefs)
         val views = RemoteViews(context.packageName, R.layout.widget_nara)
         views.setTextViewText(R.id.widget_open, if (armed) "⇗" else "↗")
@@ -186,13 +186,13 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
     }
 
     private fun getArmedState(prefs: android.content.SharedPreferences): Boolean {
-        val armedMs = prefs.getLong(KEY_ARMED_MS, 0L)
+        val armedMs = prefs.getLong(NaraGaidenStore.KEY_ARMED_MS, 0L)
         if (armedMs <= 0L) {
             return false
         }
         val now = System.currentTimeMillis()
         if (now - armedMs > ARM_WINDOW_MS) {
-            prefs.edit { putLong(KEY_ARMED_MS, 0L) }
+            prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
             return false
         }
         return true
@@ -276,12 +276,6 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         const val ACTION_REFRESH = "com.nara.gaiden.ACTION_REFRESH"
         const val ACTION_TICK = "com.nara.gaiden.ACTION_TICK"
         const val ACTION_OPEN = "com.nara.gaiden.ACTION_OPEN"
-        private const val PREFS_NAME = "nara_gaiden_widget"
-        private const val KEY_JSON = "last_json"
-        private const val KEY_UPDATED = "last_updated"
-        private const val KEY_LAST_SUCCESS_MS = "last_success_ms"
-        private const val KEY_LAST_ERROR = "last_error"
-        private const val KEY_ARMED_MS = "armed_ms"
         private const val TICK_INTERVAL_MS = 5 * 60 * 1000L
         private const val ARM_WINDOW_MS = 2_000L
         private const val NARA_PACKAGE = "com.naraorganics.nara"
