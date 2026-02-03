@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UIKit
 import WidgetKit
 
 struct ContentView: View {
@@ -35,6 +36,10 @@ struct ContentView: View {
                     Task {
                         await fetchAndReload()
                     }
+                }
+
+                Button("Nara Baby") {
+                    openNaraBaby()
                 }
             }
 
@@ -85,6 +90,25 @@ struct ContentView: View {
             status = "Error: \(error.localizedDescription)"
         }
         isFetching = false
+    }
+
+    private func openNaraBaby() {
+        guard let appUrl = URL(string: "com.naraorganics.nara://") else {
+            return
+        }
+        UIApplication.shared.open(appUrl) { success in
+            if success {
+                return
+            }
+            openNaraBabyStore()
+        }
+    }
+
+    private func openNaraBabyStore() {
+        guard let storeUrl = URL(string: "itms-apps://apps.apple.com/app/id1444639029") else {
+            return
+        }
+        UIApplication.shared.open(storeUrl)
     }
 }
 
