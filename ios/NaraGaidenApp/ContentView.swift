@@ -28,14 +28,10 @@ struct ContentView: View {
                 .foregroundColor(.secondary)
 
             HStack(spacing: 12) {
-                Button("Fetch Now") {
+                Button("Refresh") {
                     Task {
                         await fetchAndReload()
                     }
-                }
-
-                Button("Reload Widget") {
-                    WidgetCenter.shared.reloadTimelines(ofKind: "NaraGaidenLockWidget")
                 }
             }
         }
@@ -59,6 +55,7 @@ struct ContentView: View {
         }
         isFetching = true
         status = "Loading"
+        WidgetCenter.shared.reloadTimelines(ofKind: "NaraGaidenLockWidget")
         do {
             let payload = try await NaraAPI.fetch()
             status = "Loaded \(payload.children.count) children"
