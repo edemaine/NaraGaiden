@@ -45,6 +45,11 @@ class MainActivity : AppCompatActivity() {
         refreshButton.setOnClickListener {
             refreshData()
         }
+
+        val openButton = findViewById<Button>(R.id.open_nara_button)
+        openButton.setOnClickListener {
+            NaraGaidenLauncher.launchNaraApp(this)
+        }
     }
 
     override fun onResume() {

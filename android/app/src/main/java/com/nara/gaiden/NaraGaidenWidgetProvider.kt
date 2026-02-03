@@ -7,7 +7,6 @@ import android.app.AlarmManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.SystemClock
 import android.widget.RemoteViews
 import androidx.core.content.edit
@@ -162,7 +161,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         if (isArmed) {
             prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
             updateOpenUi(context, appWidgetManager, appWidgetIds, showPrompt = false)
-            launchNaraApp(context)
+            NaraGaidenLauncher.launchNaraApp(context)
             return
         }
 
@@ -196,40 +195,6 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
             return false
         }
         return true
-    }
-
-    private fun launchNaraApp(context: Context) {
-        val pm = context.packageManager
-        val launch = pm.getLaunchIntentForPackage(NARA_PACKAGE)
-        if (launch != null) {
-            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            try {
-                context.startActivity(launch)
-            } catch (_: Exception) {
-                return
-            }
-            return
-        }
-
-        val storeIntent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("market://details?id=$NARA_PACKAGE")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            context.startActivity(storeIntent)
-            return
-        } catch (_: Exception) {
-        }
-
-        val webIntent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("https://play.google.com/store/apps/details?id=$NARA_PACKAGE")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            context.startActivity(webIntent)
-        } catch (_: Exception) {
-            return
-        }
     }
 
     private fun scheduleTick(context: Context) {
@@ -266,7 +231,6 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         const val ACTION_OPEN = "com.nara.gaiden.ACTION_OPEN"
         private const val TICK_INTERVAL_MS = 5 * 60 * 1000L
         private const val ARM_WINDOW_MS = 2_000L
-        private const val NARA_PACKAGE = "com.naraorganics.nara"
         private const val READY_TEXT = "Nara Gaiden"
         private const val PROMPT_TEXT = "Tap 2x to launch Nara Baby"
         private val refreshInFlight = AtomicBoolean(false)

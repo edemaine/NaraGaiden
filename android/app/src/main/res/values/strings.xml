@@ -3,5 +3,6 @@
     <string name="widget_name">Nara Gaiden</string>
     <string name="widget_description">Latest feed and diaper times</string>
     <string name="refresh_widget">Refresh</string>
+    <string name="open_nara_baby">Nara Baby</string>
     <string name="server_label">Server</string>
 </resources>

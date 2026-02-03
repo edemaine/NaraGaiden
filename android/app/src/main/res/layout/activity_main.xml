@@ -31,12 +31,25 @@
         android:layout_marginTop="4dp"
         android:textColor="#444444" />
 
-    <Button
-        android:id="@+id/refresh_button"
+    <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="@string/refresh_widget" />
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/refresh_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/refresh_widget" />
+
+        <Button
+            android:id="@+id/open_nara_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="@string/open_nara_baby" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/app_preview_container"
