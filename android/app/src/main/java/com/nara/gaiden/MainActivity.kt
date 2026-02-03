@@ -61,8 +61,9 @@ class MainActivity : AppCompatActivity() {
     private fun loadFromCache() {
         val prefs = getSharedPreferences(NaraGaidenStore.PREFS_NAME, MODE_PRIVATE)
         val rawJson = prefs.getString(NaraGaidenStore.KEY_JSON, null)
+        val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
         val updatedLine = prefs.getString(NaraGaidenStore.KEY_UPDATED, null) ?: "as of --"
-        previewUpdated.text = updatedLine
+        previewUpdated.text = NaraGaidenFormat.withStaleSuffix(updatedLine, lastSuccessMs, include = true)
         previewStatus.text = if (rawJson != null) "Nara Gaiden" else ""
         if (rawJson == null) {
             renderRows(emptyList())
@@ -94,7 +95,7 @@ class MainActivity : AppCompatActivity() {
                     putBoolean(NaraGaidenStore.KEY_LAST_ERROR, false)
                 }
                 runOnUiThread {
-                    previewUpdated.text = result.updatedLine
+                    previewUpdated.text = NaraGaidenFormat.withStaleSuffix(result.updatedLine, successMs, include = true)
                     previewStatus.text = "Nara Gaiden"
                     renderRows(rows)
                 }
@@ -102,9 +103,10 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 val prefs = getSharedPreferences(NaraGaidenStore.PREFS_NAME, MODE_PRIVATE)
                 val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null) ?: "as of --"
+                val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
                 prefs.edit { putBoolean(NaraGaidenStore.KEY_LAST_ERROR, true) }
                 runOnUiThread {
-                    previewUpdated.text = fallbackUpdated
+                    previewUpdated.text = NaraGaidenFormat.withStaleSuffix(fallbackUpdated, lastSuccessMs, include = true)
                     previewStatus.text = "Error: ${e.message ?: "Fetch failed"}"
                 }
             } finally {

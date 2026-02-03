@@ -117,4 +117,16 @@ object NaraGaidenFormat {
 
         return TimeColors(Color.rgb(rgb[0], rgb[1], rgb[2]), Color.WHITE)
     }
+
+    fun withStaleSuffix(updatedLine: String, lastSuccessMs: Long, include: Boolean): String {
+        if (!include || lastSuccessMs <= 0) {
+            return updatedLine
+        }
+        val minutes = ((System.currentTimeMillis() - lastSuccessMs) / 60000).coerceAtLeast(0)
+        if (minutes == 0L) {
+            return updatedLine
+        }
+        val suffix = if (minutes == 1L) "1 min old" else "$minutes mins old"
+        return "$updatedLine ($suffix)"
+    }
 }

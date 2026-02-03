@@ -57,7 +57,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         val lastUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
         val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
         val baseUpdated = lastUpdated ?: "as of --"
-        val loadingUpdated = withStaleSuffix(baseUpdated, lastSuccessMs, include = true)
+        val loadingUpdated = NaraGaidenFormat.withStaleSuffix(baseUpdated, lastSuccessMs, include = true)
         val loadingViews = buildRemoteViews(context, NaraGaidenWidgetState.loading(loadingUpdated))
         appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, loadingViews) }
         appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
@@ -77,7 +77,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
                 } catch (e: Exception) {
                     val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
                     val storedLastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
-                    val updatedLine = withStaleSuffix(
+                    val updatedLine = NaraGaidenFormat.withStaleSuffix(
                         fallbackUpdated ?: "as of --",
                         storedLastSuccessMs,
                         include = true
@@ -106,7 +106,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
         val lastError = prefs.getBoolean(NaraGaidenStore.KEY_LAST_ERROR, false)
         val baseUpdated = lastUpdated ?: "as of --"
-        val updatedLine = withStaleSuffix(baseUpdated, lastSuccessMs, include = lastError)
+        val updatedLine = NaraGaidenFormat.withStaleSuffix(baseUpdated, lastSuccessMs, include = lastError)
         val views = buildRemoteViews(context, NaraGaidenWidgetState.idle(updatedLine))
         appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, views) }
         appWidgetIds.forEach { appWidgetManager.notifyAppWidgetViewDataChanged(it, R.id.widget_list) }
@@ -258,18 +258,6 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-    }
-
-    private fun withStaleSuffix(updatedLine: String, lastSuccessMs: Long, include: Boolean): String {
-        if (!include || lastSuccessMs <= 0) {
-            return updatedLine
-        }
-        val minutes = ((System.currentTimeMillis() - lastSuccessMs) / 60000).coerceAtLeast(0)
-        if (minutes == 0L) {
-            return updatedLine
-        }
-        val suffix = if (minutes == 1L) "1 min old" else "$minutes mins old"
-        return "$updatedLine ($suffix)"
     }
 
     companion object {
