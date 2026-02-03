@@ -80,7 +80,7 @@ struct NaraGaidenLockWidgetEntryView: View {
     let entry: NaraProvider.Entry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: contentSpacing) {
             if let payload = entry.payload, !payload.children.isEmpty {
                 tableView(payload: payload)
                 Spacer(minLength: 0)
@@ -103,48 +103,70 @@ struct NaraGaidenLockWidgetEntryView: View {
             let feedWidth = total * feedColumnRatio
             let diaperWidth = total * diaperColumnRatio
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Text("Baby")
-                        .frame(width: babyWidth, alignment: .leading)
-                    Text("Latest Feed")
-                        .frame(width: feedWidth, alignment: .leading)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    Text("Latest Diaper")
-                        .frame(width: diaperWidth, alignment: .leading)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-                .font(headerFont)
-                .fontWeight(.semibold)
-
-                ForEach(payload.children, id: \.id) { child in
-                    HStack(alignment: .top, spacing: 4) {
-                        Text(child.displayName)
-                            .font(nameFont)
-                            .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: tableSpacing) {
+                if !isAccessoryRectangular {
+                    HStack(spacing: tableHStackSpacing) {
+                        Text("Baby")
                             .frame(width: babyWidth, alignment: .leading)
+                        Text("Latest Feed")
+                            .frame(width: feedWidth, alignment: .leading)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(child.feed.label)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                            timeBadge(text: child.feed.relativeString(), beginDt: child.feed.beginDt)
-                        }
-                        .frame(width: feedWidth, alignment: .leading)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(child.diaper.label)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                            timeBadge(text: child.diaper.relativeString(), beginDt: child.diaper.beginDt)
-                        }
-                        .frame(width: diaperWidth, alignment: .leading)
+                        Text("Latest Diaper")
+                            .frame(width: diaperWidth, alignment: .leading)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     }
-                    .font(rowFont)
+                    .font(headerFont)
+                    .fontWeight(.semibold)
+                }
+
+                ForEach(payload.children, id: \.id) { child in
+                    if isAccessoryRectangular {
+                        HStack(alignment: .center, spacing: tableHStackSpacing) {
+                            Text(child.displayName)
+                                .font(nameFont)
+                                .fontWeight(.semibold)
+                                .frame(width: babyWidth, alignment: .leading)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+
+                            Text(feedDetailLabel(child.feed.label))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .frame(width: feedWidth, alignment: .leading)
+
+                            timeBadge(text: shortRelativeString(beginDt: child.feed.beginDt), beginDt: child.feed.beginDt)
+                                .frame(width: diaperWidth, alignment: .leading)
+                        }
+                        .font(rowFont)
+                    } else {
+                        HStack(alignment: .top, spacing: tableHStackSpacing) {
+                            Text(child.displayName)
+                                .font(nameFont)
+                                .fontWeight(.semibold)
+                                .frame(width: babyWidth, alignment: .leading)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+
+                            VStack(alignment: .leading, spacing: detailSpacing) {
+                                Text(child.feed.label)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                timeBadge(text: child.feed.relativeString(), beginDt: child.feed.beginDt)
+                            }
+                            .frame(width: feedWidth, alignment: .leading)
+
+                            VStack(alignment: .leading, spacing: detailSpacing) {
+                                Text(child.diaper.label)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                timeBadge(text: child.diaper.relativeString(), beginDt: child.diaper.beginDt)
+                            }
+                            .frame(width: diaperWidth, alignment: .leading)
+                        }
+                        .font(rowFont)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,8 +209,8 @@ struct NaraGaidenLockWidgetEntryView: View {
         let colors = timeColors(beginDt: beginDt)
         return Text(text)
             .font(badgeFont)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
+            .padding(.horizontal, badgeHorizontalPadding)
+            .padding(.vertical, badgeVerticalPadding)
             .background(colors.bg)
             .foregroundColor(colors.fg)
             .cornerRadius(4)
@@ -196,24 +218,79 @@ struct NaraGaidenLockWidgetEntryView: View {
             .minimumScaleFactor(0.7)
     }
 
+    private func feedDetailLabel(_ label: String) -> String {
+        guard let start = label.firstIndex(of: "("), let end = label.lastIndex(of: ")"), start < end else {
+            return label
+        }
+        let inner = label.index(after: start)..<end
+        return String(label[inner]).trimmingCharacters(in: .whitespaces)
+    }
+
+    private func shortRelativeString(beginDt: Int64?) -> String {
+        guard let beginDt else {
+            return "--"
+        }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let minutes = max(0, Int((nowMs - beginDt) / 60000))
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        if hours <= 0 {
+            return "\(remainingMinutes)m"
+        }
+        if remainingMinutes == 0 {
+            return "\(hours)h"
+        }
+        return "\(hours)h \(remainingMinutes)m"
+    }
+
     private var horizontalPadding: CGFloat {
-        family == .systemMedium ? 2 : 8
+        if family == .systemMedium {
+            return 2
+        }
+        if isAccessoryRectangular {
+            return 2
+        }
+        return 8
     }
 
     private var verticalPadding: CGFloat {
-        family == .systemMedium ? -8 : 4
+        if family == .systemMedium {
+            return -8
+        }
+        if isAccessoryRectangular {
+            return -2
+        }
+        return 4
     }
 
     private var babyColumnRatio: CGFloat {
-        family == .systemMedium ? 0.16 : 0.2
+        if family == .systemMedium {
+            return 0.16
+        }
+        if isAccessoryRectangular {
+            return 0.34
+        }
+        return 0.2
     }
 
     private var feedColumnRatio: CGFloat {
-        family == .systemMedium ? 0.44 : 0.4
+        if family == .systemMedium {
+            return 0.44
+        }
+        if isAccessoryRectangular {
+            return 0.26
+        }
+        return 0.4
     }
 
     private var diaperColumnRatio: CGFloat {
-        family == .systemMedium ? 0.4 : 0.4
+        if family == .systemMedium {
+            return 0.4
+        }
+        if isAccessoryRectangular {
+            return 0.4
+        }
+        return 0.4
     }
 
     private var headerFont: Font {
@@ -221,23 +298,75 @@ struct NaraGaidenLockWidgetEntryView: View {
     }
 
     private var rowFont: Font {
-        family == .systemMedium ? .callout : .caption2
+        if family == .systemMedium {
+            return .callout
+        }
+        if isAccessoryRectangular {
+            return .caption2
+        }
+        return .caption2
     }
 
     private var nameFont: Font {
-        family == .systemMedium ? .caption : .caption2
+        if family == .systemMedium {
+            return .caption
+        }
+        if isAccessoryRectangular {
+            return .caption2
+        }
+        return .caption2
     }
 
     private var badgeFont: Font {
-        family == .systemMedium ? .body : .caption
+        if family == .systemMedium {
+            return .body
+        }
+        if isAccessoryRectangular {
+            return .caption2
+        }
+        return .caption
     }
 
     private var footerFont: Font {
-        family == .systemMedium ? .caption : .caption2
+        if family == .systemMedium {
+            return .caption
+        }
+        if isAccessoryRectangular {
+            return .caption2
+        }
+        return .caption2
     }
 
     private var primaryFont: Font {
         family == .systemMedium ? .headline : .caption
+    }
+
+    private var isAccessoryRectangular: Bool {
+        family == .accessoryRectangular
+    }
+
+    private var contentSpacing: CGFloat {
+        isAccessoryRectangular ? 2 : 3
+    }
+
+    private var tableSpacing: CGFloat {
+        isAccessoryRectangular ? 2 : 4
+    }
+
+    private var tableHStackSpacing: CGFloat {
+        isAccessoryRectangular ? 2 : 4
+    }
+
+    private var detailSpacing: CGFloat {
+        isAccessoryRectangular ? 1 : 2
+    }
+
+    private var badgeHorizontalPadding: CGFloat {
+        isAccessoryRectangular ? 4 : 6
+    }
+
+    private var badgeVerticalPadding: CGFloat {
+        isAccessoryRectangular ? 0 : 1
     }
 
     private func timeColors(beginDt: Int64?) -> (bg: Color, fg: Color) {

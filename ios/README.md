@@ -35,3 +35,17 @@ If the phone says "Untrusted Developer":
 - Settings -> General -> VPN & Device Management (or Profiles & Device Management).
 - Under "Developer App", tap your Apple ID.
 - Tap "Trust" and confirm, then relaunch the app.
+
+## Lock Screen Widget (Simulator)
+
+- Lock the device: Hardware -> Lock (or Cmd+L).
+- Wake/unlock: press the Home button or click the screen, then swipe up.
+- If a passcode is set, type it with your keyboard and press Enter.
+- Long-press the lock screen -> Customize -> Lock Screen -> tap the widget area under the clock -> add "Nara Gaiden".
+
+## Lock Screen Widget (Phone)
+
+- Wake and unlock the phone, then long-press the lock screen.
+- Tap Customize -> Lock Screen.
+- Tap the widget area under the clock.
+- Add "Nara Gaiden", then tap Done.
