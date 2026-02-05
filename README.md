@@ -16,6 +16,15 @@ which a web, Android, or iOS app can connect to.
 Note that there is no authentication. This is safe within a LAN,
 but you might not want to broadcast your babies' data to the Internet.
 
+## Web View
+
+![Screenshot of web view](screenshots/web.png)
+
+* Shows latest feeds and diaper changes (times and amounts) for each baby
+* 💊 indicates vitamins have been fed for the day
+  (based on routine tracking)
+* Automatically updates every minute
+
 ## Quick Start
 
 1. Install [Android Studio](https://developer.android.com/studio).
