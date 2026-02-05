@@ -46,10 +46,12 @@ but you might not want to broadcast your babies' data to the Internet.
 6. Run the server:
    - `python nara_web.py --host 0.0.0.0 --port 8888 --adb-device emulator-5554`
    - (`--adb-device` should match whatever `adb devices` lists)
-7. Configure clients to point at your server:
+7. Connect web browser to `localhost:8888` (or modify to your IP address)
+   for the web view.
+8. For mobile apps, configure clients to point at your server:
    - iOS: edit `ios/Shared/NaraAPI.swift` (`NaraConfig.serverURLString`).
    - Android: edit `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt`.
-8. Build/install the Android and/or iOS apps as desired.
+9. Build/install the Android and/or iOS apps as desired:
    - iOS setup details: `ios/README.md`
    - Android setup details: `android/README.md`
 
