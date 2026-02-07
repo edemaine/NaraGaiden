@@ -21,6 +21,12 @@ but you might not want to broadcast your babies' data to the Internet.
 ![Screenshot of web view](screenshots/web.png)
 
 * Shows latest feeds and diaper changes (times and amounts) for each baby
+* Time cells are color-coded by recency/urgency,
+  smoothly transitioning between
+  * green = up to 1 hour old
+  * yellow = 2 hours old
+  * orange = 3 hours old
+  * red = 4+ hours old
 * 💊 indicates vitamins have been fed for the day
   (based on routine tracking)
 * Automatically updates every minute
