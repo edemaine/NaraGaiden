@@ -635,8 +635,11 @@ def milk_totals_by_day(events, child_map):
     diaper_counts_by_child_day = {}
     diaper_counts_by_child_day_hour = {}
     feed_times_by_child = {}
+    feed_times_all = []
     gap_stats_by_child_day = {}
     gap_stats_by_child_day_hour = {}
+    gap_stats_all_day = {}
+    gap_stats_all_day_hour = {}
     day_keys = set()
     skipped_units = 0
     for ev in events:
@@ -663,6 +666,7 @@ def milk_totals_by_day(events, child_map):
 
         child_feed_times = feed_times_by_child.setdefault(child_key, [])
         child_feed_times.append(begin_dt)
+        feed_times_all.append(begin_dt)
 
         payload = ev.get("payload") or {}
         volume, unit = bottle_volume(payload)
@@ -704,6 +708,28 @@ def milk_totals_by_day(events, child_map):
             hour_stat["max"] = max(float(hour_stat["max"]), gap_hours)
             prev_dt = current_dt
 
+    if len(feed_times_all) >= 2:
+        feed_times_all.sort()
+        prev_dt = feed_times_all[0]
+        for current_dt in feed_times_all[1:]:
+            if current_dt <= prev_dt:
+                prev_dt = current_dt
+                continue
+            gap_hours = (current_dt - prev_dt) / 3600000.0
+            gap_day_key = time.strftime("%Y-%m-%d", time.localtime(current_dt / 1000.0))
+            gap_hour = time.localtime(current_dt / 1000.0).tm_hour
+            stat = gap_stats_all_day.setdefault(gap_day_key, {"sum": 0.0, "count": 0, "max": 0.0})
+            stat["sum"] += gap_hours
+            stat["count"] += 1
+            stat["max"] = max(float(stat["max"]), gap_hours)
+
+            day_hour_stats = gap_stats_all_day_hour.setdefault(gap_day_key, {})
+            hour_stat = day_hour_stats.setdefault(gap_hour, {"sum": 0.0, "count": 0, "max": 0.0})
+            hour_stat["sum"] += gap_hours
+            hour_stat["count"] += 1
+            hour_stat["max"] = max(float(hour_stat["max"]), gap_hours)
+            prev_dt = current_dt
+
     if not day_keys:
         return {
             "labels": [],
@@ -729,6 +755,84 @@ def milk_totals_by_day(events, child_map):
         "#6d4c41",
         "#5e35b1",
     ]
+
+    all_babies_max_gap_points = []
+    all_babies_avg_gap_points = []
+    for day_key in labels:
+        gap_stat = gap_stats_all_day.get(day_key)
+        if gap_stat and gap_stat.get("count", 0) > 0:
+            all_babies_max_gap_points.append(float(gap_stat.get("max", 0.0)))
+            all_babies_avg_gap_points.append(
+                float(gap_stat.get("sum", 0.0)) / float(gap_stat.get("count", 1))
+            )
+        else:
+            all_babies_max_gap_points.append(None)
+            all_babies_avg_gap_points.append(None)
+
+    all_babies_max_gap_display = _trim_optional_series(all_babies_max_gap_points, decimals=2)
+    all_babies_avg_gap_display = _trim_optional_series(all_babies_avg_gap_points, decimals=2)
+    if all_babies_max_gap_display is None:
+        all_babies_max_gap_display = [None] * len(labels)
+    if all_babies_avg_gap_display is None:
+        all_babies_avg_gap_display = [None] * len(labels)
+
+    all_babies_split = {}
+    for night_start_hour in range(24):
+        day_gap_max_points = []
+        day_gap_avg_points = []
+        night_gap_max_points = []
+        night_gap_avg_points = []
+        for day_key in labels:
+            gap_hour_stats = gap_stats_all_day_hour.get(day_key, {})
+            day_gap_sum = 0.0
+            day_gap_count = 0
+            day_gap_max = None
+            night_gap_sum = 0.0
+            night_gap_count = 0
+            night_gap_max = None
+            for hour, stat in gap_hour_stats.items():
+                gap_sum = float(stat.get("sum", 0.0))
+                gap_count = int(stat.get("count", 0))
+                gap_max = float(stat.get("max", 0.0))
+                if gap_count <= 0:
+                    continue
+                if is_night_hour(hour, night_start_hour):
+                    night_gap_sum += gap_sum
+                    night_gap_count += gap_count
+                    night_gap_max = gap_max if night_gap_max is None else max(night_gap_max, gap_max)
+                else:
+                    day_gap_sum += gap_sum
+                    day_gap_count += gap_count
+                    day_gap_max = gap_max if day_gap_max is None else max(day_gap_max, gap_max)
+
+            day_gap_max_points.append(day_gap_max)
+            day_gap_avg_points.append(day_gap_sum / day_gap_count if day_gap_count > 0 else None)
+            night_gap_max_points.append(night_gap_max)
+            night_gap_avg_points.append(night_gap_sum / night_gap_count if night_gap_count > 0 else None)
+
+        day_gap_max_display = _trim_optional_series(day_gap_max_points, decimals=2)
+        day_gap_avg_display = _trim_optional_series(day_gap_avg_points, decimals=2)
+        night_gap_max_display = _trim_optional_series(night_gap_max_points, decimals=2)
+        night_gap_avg_display = _trim_optional_series(night_gap_avg_points, decimals=2)
+        if day_gap_max_display is None:
+            day_gap_max_display = [None] * len(labels)
+        if day_gap_avg_display is None:
+            day_gap_avg_display = [None] * len(labels)
+        if night_gap_max_display is None:
+            night_gap_max_display = [None] * len(labels)
+        if night_gap_avg_display is None:
+            night_gap_avg_display = [None] * len(labels)
+
+        all_babies_split[str(night_start_hour)] = {
+            "day": {
+                "maxGap": day_gap_max_display,
+                "avgGap": day_gap_avg_display,
+            },
+            "night": {
+                "maxGap": night_gap_max_display,
+                "avgGap": night_gap_avg_display,
+            },
+        }
 
     series = []
     series_child_keys = sorted(
@@ -916,6 +1020,12 @@ def milk_totals_by_day(events, child_map):
     return {
         "labels": labels,
         "series": series,
+        "allBabiesGap": {
+            "label": "All Babies",
+            "maxGap": all_babies_max_gap_display,
+            "avgGap": all_babies_avg_gap_display,
+            "split": all_babies_split,
+        },
         "defaultNightStart": 20,
         "skippedUnits": skipped_units,
     }
@@ -1037,6 +1147,7 @@ def build_plot_html(events, child_map, generated_at):
     const payload = {chart_data_json};
     const labels = payload.labels || [];
     const series = payload.series || [];
+    const allBabiesGap = payload.allBabiesGap || null;
     const defaultNightStart = Number(payload.defaultNightStart ?? 20);
     const hiddenSeriesKeys = new Set();
 
@@ -1178,6 +1289,37 @@ def build_plot_html(events, child_map, generated_at):
       return entry.daily || [];
     }}
 
+    function allBabiesModeGapValues(plotMode) {{
+      if (!allBabiesGap) {{
+        return [];
+      }}
+      if (plotMode === "gap-max") {{
+        return allBabiesGap.maxGap || [];
+      }}
+      if (plotMode === "gap-avg") {{
+        return allBabiesGap.avgGap || [];
+      }}
+      return [];
+    }}
+
+    function allBabiesSplitGapValues(plotMode, nightStartHour, period) {{
+      if (!allBabiesGap) {{
+        return [];
+      }}
+      const splitByHour = allBabiesGap.split || {{}};
+      const split = splitByHour[String(nightStartHour)] || null;
+      if (!split || !split[period]) {{
+        return [];
+      }}
+      if (plotMode === "gap-max") {{
+        return split[period].maxGap || [];
+      }}
+      if (plotMode === "gap-avg") {{
+        return split[period].avgGap || [];
+      }}
+      return [];
+    }}
+
     function buildDatasets(plotMode, smoothWindow, splitEnabled, nightStartHour) {{
       const datasets = [];
       series.forEach((entry) => {{
@@ -1229,6 +1371,61 @@ def build_plot_html(events, child_map, generated_at):
             spanGaps: false,
             hidden: hiddenSeriesKeys.has(customKey),
           }});
+        }});
+      }});
+
+      const isGapMode = plotMode === "gap-max" || plotMode === "gap-avg";
+      if (!isGapMode || !allBabiesGap) {{
+        return datasets;
+      }}
+
+      if (!splitEnabled) {{
+        const raw = allBabiesModeGapValues(plotMode);
+        const data = isSmoothable(plotMode) ? movingAverage(raw, smoothWindow, todayIndex) : raw;
+        if (hasAnyValue(data)) {{
+          const customKey = `combined:${{plotMode}}:all-babies`;
+          datasets.push({{
+            label: allBabiesGap.label || "All Babies",
+            customKey,
+            data,
+            borderColor: "#ffffff",
+            backgroundColor: "#ffffff",
+            pointRadius: 1,
+            pointHoverRadius: 4,
+            borderWidth: 3,
+            tension: 0.2,
+            spanGaps: false,
+            hidden: hiddenSeriesKeys.has(customKey),
+          }});
+        }}
+        return datasets;
+      }}
+
+      const combinedPeriodSpecs = [
+        {{ period: "day", label: "Day", dash: [] }},
+        {{ period: "night", label: "Night", dash: [8, 5] }},
+      ];
+      combinedPeriodSpecs.forEach((spec) => {{
+        const raw = allBabiesSplitGapValues(plotMode, nightStartHour, spec.period);
+        const data = isSmoothable(plotMode) ? movingAverage(raw, smoothWindow, todayIndex) : raw;
+        if (!hasAnyValue(data)) {{
+          return;
+        }}
+        const customKey = `combined:${{plotMode}}:all-babies:${{spec.period}}`;
+        const labelBase = allBabiesGap.label || "All Babies";
+        datasets.push({{
+          label: `${{labelBase}} (${{spec.label}})`,
+          customKey,
+          data,
+          borderColor: "#ffffff",
+          backgroundColor: "#ffffff",
+          borderDash: spec.dash,
+          pointRadius: 1,
+          pointHoverRadius: 4,
+          borderWidth: 3,
+          tension: 0.2,
+          spanGaps: false,
+          hidden: hiddenSeriesKeys.has(customKey),
         }});
       }});
       return datasets;
