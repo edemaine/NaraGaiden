@@ -8,7 +8,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:paddingTop="24dp"
+        android:paddingBottom="24dp">
 
     <TextView
         android:id="@+id/app_title"
@@ -69,7 +70,7 @@
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1.1"
+                android:layout_weight="1"
                 android:text="Baby"
                 android:textColor="@color/widget_text_secondary"
                 android:textSize="13sp"
@@ -85,7 +86,7 @@
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="2.9"
+                android:layout_weight="3.1"
                 android:gravity="center_horizontal"
                 android:text="Latest Feed"
                 android:textColor="@color/widget_text_secondary"
@@ -102,7 +103,7 @@
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="2.1"
+                android:layout_weight="2.45"
                 android:gravity="center_horizontal"
                 android:text="Latest Diaper"
                 android:textColor="@color/widget_text_secondary"
@@ -140,7 +141,7 @@
             android:layout_marginTop="8dp"
             android:lineSpacingExtra="2dp"
             android:textColor="#ffd08a"
-            android:textSize="13sp"
+            android:textSize="16sp"
             android:visibility="gone" />
 
         <LinearLayout

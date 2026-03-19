@@ -430,7 +430,7 @@ def build_html(
     }
     .alert-line {
       color: #ffd08a;
-      font-size: clamp(12px, 1vw + 6px, 18px);
+      font-size: clamp(16px, 1.2vw + 10px, 24px);
       line-height: 1.35;
     }
     .action-buttons {

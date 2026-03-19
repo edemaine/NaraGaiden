@@ -54,7 +54,7 @@ struct NaraAppPreview: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(payload.poopAlerts, id: \.self) { alert in
                         Text(alert)
-                            .font(.footnote)
+                            .font(.subheadline)
                             .foregroundColor(.orange)
                             .fixedSize(horizontal: false, vertical: true)
                     }
