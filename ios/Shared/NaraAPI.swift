@@ -8,12 +8,43 @@ struct NaraConfig {
     }
 }
 
+enum NaraAlerts {
+    static let poopThresholdMs: Int64 = 2 * 24 * 60 * 60 * 1000
+    static let warningEmoji = "⚠️"
+
+    static func formatPoopAlertDays(lastPoopDiaperBeginDt: Int64?, now: Date = Date()) -> String? {
+        guard let lastPoopDiaperBeginDt else {
+            return nil
+        }
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let deltaMs = max(0, nowMs - lastPoopDiaperBeginDt)
+        guard deltaMs >= poopThresholdMs else {
+            return nil
+        }
+        let roundedTenths = Int((Double(deltaMs) / 86_400_000.0 * 10.0).rounded())
+        let wholeDays = roundedTenths / 10
+        let tenths = roundedTenths % 10
+        let value: String
+        if tenths == 0 {
+            value = String(wholeDays)
+        } else {
+            value = String(format: "%.1f", Double(roundedTenths) / 10.0)
+        }
+        let unit = roundedTenths == 10 ? "day" : "days"
+        return "\(value) \(unit)"
+    }
+}
+
 struct NaraPayload: Codable {
     let generatedAt: Int64
     let children: [NaraChild]
 
     var generatedDate: Date {
         Date(timeIntervalSince1970: TimeInterval(generatedAt) / 1000.0)
+    }
+
+    var poopAlerts: [String] {
+        children.compactMap { $0.poopAlertText() }
     }
 
     static func preview() -> NaraPayload {
@@ -32,6 +63,7 @@ struct NaraPayload: Codable {
                         label: "Wet",
                         beginDt: nowMs - 55 * 60 * 1000
                     ),
+                    lastPoopDiaperBeginDt: nowMs - 60 * 60 * 60 * 1000,
                     vitaminsToday: 2,
                     medicationToday: 1,
                     bathsToday: 1
@@ -46,6 +78,7 @@ struct NaraChild: Codable, Identifiable {
     let name: String
     let feed: NaraEvent
     let diaper: NaraEvent
+    let lastPoopDiaperBeginDt: Int64?
     let vitaminsToday: Int?
     let medicationToday: Int?
     let bathsToday: Int?
@@ -54,13 +87,22 @@ struct NaraChild: Codable, Identifiable {
         let vitaminCount = max(vitaminsToday ?? 0, 0)
         let medicationCount = max(medicationToday ?? 0, 0)
         let bathCount = max(bathsToday ?? 0, 0)
-        let indicators = String(repeating: "💊", count: max(vitaminCount, 0))
+        let alertIndicator = poopAlertText() == nil ? "" : NaraAlerts.warningEmoji
+        let indicators = alertIndicator
+            + String(repeating: "💊", count: max(vitaminCount, 0))
             + String(repeating: "💉", count: max(medicationCount, 0))
             + String(repeating: "🛁", count: max(bathCount, 0))
         if indicators.isEmpty {
             return name
         }
         return "\(name) \(indicators)"
+    }
+
+    func poopAlertText(now: Date = Date()) -> String? {
+        guard let daysText = NaraAlerts.formatPoopAlertDays(lastPoopDiaperBeginDt: lastPoopDiaperBeginDt, now: now) else {
+            return nil
+        }
+        return "\(NaraAlerts.warningEmoji) \(name) hasn't pooped for \(daysText)."
     }
 }
 

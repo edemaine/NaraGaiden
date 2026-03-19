@@ -4,6 +4,10 @@ import android.graphics.Color
 import kotlin.math.max
 import kotlin.math.roundToInt
 import org.json.JSONObject
+import java.util.Locale
+
+private const val POOP_ALERT_THRESHOLD_MS = 2L * 24L * 60L * 60L * 1000L
+private const val POOP_ALERT_EMOJI = "⚠️"
 
 data class NaraGaidenRow(
     val name: String,
@@ -11,13 +15,20 @@ data class NaraGaidenRow(
     val feedBeginDt: Long?,
     val diaperLabel: String,
     val diaperBeginDt: Long?,
+    val lastPoopDiaperBeginDt: Long?,
     val vitaminsTodayCount: Int,
     val medicationTodayCount: Int,
     val bathsTodayCount: Int
 ) {
+    val hasPoopAlert: Boolean
+        get() = NaraGaidenFormat.formatPoopAlertDays(lastPoopDiaperBeginDt) != null
+
     val displayName: String
         get() {
             val indicators = buildString {
+                if (hasPoopAlert) {
+                    append(POOP_ALERT_EMOJI)
+                }
                 repeat(vitaminsTodayCount.coerceAtLeast(0)) { append("💊") }
                 repeat(medicationTodayCount.coerceAtLeast(0)) { append("💉") }
                 repeat(bathsTodayCount.coerceAtLeast(0)) { append("🛁") }
@@ -27,6 +38,11 @@ data class NaraGaidenRow(
             }
             return "$name $indicators"
         }
+
+    fun poopAlertText(nowMs: Long = System.currentTimeMillis()): String? {
+        val daysText = NaraGaidenFormat.formatPoopAlertDays(lastPoopDiaperBeginDt, nowMs) ?: return null
+        return "$POOP_ALERT_EMOJI $name hasn't pooped for $daysText."
+    }
 }
 
 object NaraGaidenStore {
@@ -54,6 +70,7 @@ object NaraGaidenContent {
                     feedBeginDt = feed?.optLong("beginDt", 0L)?.takeIf { it > 0 },
                     diaperLabel = diaper?.optString("label", "unknown") ?: "unknown",
                     diaperBeginDt = diaper?.optLong("beginDt", 0L)?.takeIf { it > 0 },
+                    lastPoopDiaperBeginDt = child.optLong("lastPoopDiaperBeginDt", 0L).takeIf { it > 0 },
                     vitaminsTodayCount = (
                         if (child.has("vitaminsToday")) {
                             child.optInt("vitaminsToday", 0)
@@ -163,6 +180,24 @@ object NaraGaidenFormat {
         }
 
         return TimeColors(Color.rgb(rgb[0], rgb[1], rgb[2]), Color.WHITE)
+    }
+
+    fun formatPoopAlertDays(lastPoopDiaperBeginDt: Long?, nowMs: Long = System.currentTimeMillis()): String? {
+        if (lastPoopDiaperBeginDt == null) {
+            return null
+        }
+        val deltaMs = (nowMs - lastPoopDiaperBeginDt).coerceAtLeast(0L)
+        if (deltaMs < POOP_ALERT_THRESHOLD_MS) {
+            return null
+        }
+        val roundedTenths = ((deltaMs.toDouble() / 86_400_000.0) * 10.0).roundToInt().coerceAtLeast(0)
+        val value = if (roundedTenths % 10 == 0) {
+            (roundedTenths / 10).toString()
+        } else {
+            String.format(Locale.US, "%.1f", roundedTenths / 10.0)
+        }
+        val unit = if (roundedTenths == 10) "day" else "days"
+        return "$value $unit"
     }
 
     fun withStaleSuffix(updatedLine: String, lastSuccessMs: Long, include: Boolean): String {

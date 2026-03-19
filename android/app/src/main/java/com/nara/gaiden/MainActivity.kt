@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MainActivity : AppCompatActivity() {
     private lateinit var previewList: LinearLayout
     private lateinit var previewEmpty: TextView
+    private lateinit var previewAlerts: TextView
     private lateinit var previewUpdated: TextView
     private lateinit var previewStatus: TextView
     private val refreshHandler = Handler(Looper.getMainLooper())
@@ -36,6 +37,7 @@ class MainActivity : AppCompatActivity() {
 
         previewList = findViewById(R.id.app_preview_list)
         previewEmpty = findViewById(R.id.app_preview_empty)
+        previewAlerts = findViewById(R.id.app_preview_alerts)
         previewUpdated = findViewById(R.id.app_preview_updated)
         previewStatus = findViewById(R.id.app_preview_status)
 
@@ -129,6 +131,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderRows(rows: List<NaraGaidenRow>) {
         previewList.removeAllViews()
+        val alertsText = rows.mapNotNull { it.poopAlertText() }.joinToString("\n")
+        previewAlerts.text = alertsText
+        previewAlerts.visibility = if (alertsText.isEmpty()) View.GONE else View.VISIBLE
         if (rows.isEmpty()) {
             previewEmpty.visibility = View.VISIBLE
             return

@@ -50,6 +50,19 @@ struct NaraAppPreview: View {
 
             Divider()
 
+            if !payload.poopAlerts.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(payload.poopAlerts, id: \.self) { alert in
+                        Text(alert)
+                            .font(.footnote)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Divider()
+            }
+
             HStack {
                 Text(asOfText)
                     .font(.footnote)

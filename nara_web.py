@@ -36,6 +36,9 @@ body {
 }
 """.strip()
 
+POOP_ALERT_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000
+ALERT_ICON_HTML = "&#9888;&#65039;"
+
 
 def format_relative(ms, now_ms=None):
     if ms is None:
@@ -99,6 +102,21 @@ def latest_by_group(events, group_key):
     latest = {}
     for ev in events:
         if ev.get("trackGroupKey") != group_key:
+            continue
+        child_key = ev.get("childKey") or "unknown"
+        current = latest.get(child_key)
+        if not current or ev.get("beginDt", 0) > current.get("beginDt", 0):
+            latest[child_key] = ev
+    return latest
+
+
+def latest_poopy_diapers(events):
+    latest = {}
+    for ev in events:
+        if ev.get("trackGroupKey") != "DIAPER":
+            continue
+        payload = ev.get("payload") or {}
+        if not payload.get("diaperTypePoop"):
             continue
         child_key = ev.get("childKey") or "unknown"
         current = latest.get(child_key)
@@ -238,9 +256,32 @@ def diaper_label(ev):
     return "/".join(parts) if parts else "Diaper"
 
 
+def format_days_count(delta_ms):
+    rounded_tenths = max(0, int(round((float(delta_ms) / 86400000.0) * 10)))
+    whole_days, tenths = divmod(rounded_tenths, 10)
+    if tenths == 0:
+        value = str(whole_days)
+    else:
+        value = f"{rounded_tenths / 10.0:.1f}".rstrip("0").rstrip(".")
+    unit = "day" if rounded_tenths == 10 else "days"
+    return f"{value} {unit}"
+
+
+def poop_alert_text(name, last_poopy_diaper_ms, now_ms=None):
+    if last_poopy_diaper_ms is None:
+        return None
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    delta_ms = max(0, now_ms - int(last_poopy_diaper_ms))
+    if delta_ms < POOP_ALERT_THRESHOLD_MS:
+        return None
+    return f"{name} hasn't pooped for {format_days_count(delta_ms)}."
+
+
 def build_body(
     latest_feed,
     latest_diaper,
+    latest_poopy_diapers_map,
     child_map,
     generated_at,
     vitamins=None,
@@ -255,6 +296,7 @@ def build_body(
     if baths is None:
         baths = {}
     rows = []
+    alerts = []
     child_keys = sorted(
         ## Skip babies with no latest feed (dogs):
         latest_feed.keys(),
@@ -265,11 +307,14 @@ def build_body(
     for child_key in child_keys:
         name = child_map.get(child_key) or child_key
         name_html = html.escape(name)
+        poopy_diaper_ev = latest_poopy_diapers_map.get(child_key)
+        alert_text = poop_alert_text(name, poopy_diaper_ev.get("beginDt") if poopy_diaper_ev else None, now_ms)
         vitamin_count = int(vitamins.get(child_key, 0) or 0)
         medication_count = int(medications.get(child_key, 0) or 0)
         bath_count = int(baths.get(child_key, 0) or 0)
         indicators = (
-            ("&#128138;" * vitamin_count)
+            (ALERT_ICON_HTML if alert_text else "")
+            + ("&#128138;" * vitamin_count)
             + ("&#128137;" * medication_count)
             + ("&#128705;" * bath_count)
         )
@@ -292,9 +337,15 @@ def build_body(
             f"<td class=\"time\" style=\"background:{diaper_bg}; color:{diaper_fg};\">{html.escape(diaper_when)}</td>"
             "</tr>"
         )
+        if alert_text:
+            alerts.append(f"{ALERT_ICON_HTML} {html.escape(alert_text)}")
 
     generated = time.strftime("%Y-%m-%d %H:%M", time.localtime(generated_at / 1000))
     rows_html = "\n".join(rows) or "<tr><td colspan=\"5\">No feeds found</td></tr>"
+    alerts_html = ""
+    if alerts:
+        alert_lines = "\n".join(f'<div class="alert-line">{alert}</div>' for alert in alerts)
+        alerts_html = f'<div class="alerts">{alert_lines}</div>'
     return f"""
     <table>
       <colgroup>
@@ -315,6 +366,7 @@ def build_body(
         {rows_html}
       </tbody>
     </table>
+    {alerts_html}
     <div class=\"actions\">
       <div class=\"action-buttons\">
         <button class=\"btn\" onclick=\"openCleanWindow()\">Open Window</button>
@@ -328,6 +380,7 @@ def build_body(
 def build_html(
     latest_feed,
     latest_diaper,
+    latest_poopy_diapers_map,
     child_map,
     generated_at,
     body_class="",
@@ -335,7 +388,16 @@ def build_html(
     medications=None,
     baths=None,
 ):
-    body_html = build_body(latest_feed, latest_diaper, child_map, generated_at, vitamins, medications, baths)
+    body_html = build_body(
+        latest_feed,
+        latest_diaper,
+        latest_poopy_diapers_map,
+        child_map,
+        generated_at,
+        vitamins,
+        medications,
+        baths,
+    )
     css = (GLOBAL_CSS + """
     @view-transition { navigation: auto; }
     body {
@@ -360,6 +422,16 @@ def build_html(
       justify-content: space-between;
       align-items: center;
       margin-top: clamp(8px, 1.2vw, 16px);
+    }
+    .alerts {
+      margin-top: clamp(10px, 1.4vw, 18px);
+      display: grid;
+      gap: clamp(6px, 0.9vw, 12px);
+    }
+    .alert-line {
+      color: #ffd08a;
+      font-size: clamp(12px, 1vw + 6px, 18px);
+      line-height: 1.35;
     }
     .action-buttons {
       display: flex;
@@ -496,7 +568,16 @@ def build_html(
 
 
 
-def build_json(latest_feed, latest_diaper, child_map, generated_at, vitamins=None, medications=None, baths=None):
+def build_json(
+    latest_feed,
+    latest_diaper,
+    latest_poopy_diapers_map,
+    child_map,
+    generated_at,
+    vitamins=None,
+    medications=None,
+    baths=None,
+):
     if vitamins is None:
         vitamins = {}
     if medications is None:
@@ -512,6 +593,7 @@ def build_json(latest_feed, latest_diaper, child_map, generated_at, vitamins=Non
         name = child_map.get(child_key) or child_key
         feed_ev = latest_feed.get(child_key)
         diaper_ev = latest_diaper.get(child_key)
+        poopy_diaper_ev = latest_poopy_diapers_map.get(child_key)
         vitamin_count = int(vitamins.get(child_key, 0) or 0)
         medication_count = int(medications.get(child_key, 0) or 0)
         bath_count = int(baths.get(child_key, 0) or 0)
@@ -530,6 +612,7 @@ def build_json(latest_feed, latest_diaper, child_map, generated_at, vitamins=Non
                     "label": diaper_label(diaper_ev) if diaper_ev else "unknown",
                     "beginDt": diaper_ev.get("beginDt") if diaper_ev else None,
                 },
+                "lastPoopDiaperBeginDt": poopy_diaper_ev.get("beginDt") if poopy_diaper_ev else None,
             }
         )
     return {
@@ -2089,9 +2172,10 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             server = cast(NaraServer, self.server)
-            data, is_stale = fetch_live_data(server)
+            data, _is_stale = fetch_live_data(server)
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
+            latest_poopy = latest_poopy_diapers(data.get("events", []))
             generated_at = data.get("generatedAt", int(time.time() * 1000))
             vitamins = routine_counts_today(data.get("events", []), ["vitamin"])
             medications = routine_counts_today(data.get("events", []), ["medication", "medicine"])
@@ -2100,6 +2184,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = build_json(
                     latest_feed,
                     latest_diaper,
+                    latest_poopy,
                     data.get("children", {}),
                     generated_at,
                     vitamins,
@@ -2135,6 +2220,7 @@ class Handler(BaseHTTPRequestHandler):
             html_body = build_html(
                 latest_feed,
                 latest_diaper,
+                latest_poopy,
                 data.get("children", {}),
                 generated_at,
                 body_class,
