@@ -51,7 +51,8 @@ object NaraGaidenStore {
     const val KEY_UPDATED = "last_updated"
     const val KEY_LAST_SUCCESS_MS = "last_success_ms"
     const val KEY_LAST_ERROR = "last_error"
-    const val KEY_ARMED_MS = "armed_ms"
+    const val KEY_GAIDEN_ARMED_MS = "gaiden_armed_ms"
+    const val KEY_NARA_ARMED_MS = "nara_armed_ms"
 }
 
 object NaraGaidenContent {

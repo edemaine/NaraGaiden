@@ -39,7 +39,8 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         when (intent.action) {
             ACTION_REFRESH -> refreshAll(context, manager, ids)
             ACTION_TICK -> updateFromCache(context, manager, ids)
-            ACTION_OPEN -> handleOpenTap(context, manager, ids)
+            ACTION_OPEN_GAIDEN -> handleOpenTap(context, manager, ids, LaunchTarget.GAIDEN)
+            ACTION_OPEN_NARA -> handleOpenTap(context, manager, ids, LaunchTarget.NARA)
         }
     }
 
@@ -52,7 +53,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
             return
         }
         val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
+        clearLaunchArmedState(prefs)
         val lastUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
         val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
         val baseUpdated = lastUpdated ?: "as of --"
@@ -121,8 +122,14 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         views.setEmptyView(R.id.widget_list, R.id.widget_empty)
 
         val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
-        val armed = getArmedState(prefs)
-        views.setTextViewText(R.id.widget_open, if (armed) "⇗" else "↗")
+        views.setTextViewText(
+            R.id.widget_open_gaiden,
+            if (getArmedState(prefs, NaraGaidenStore.KEY_GAIDEN_ARMED_MS)) "⇗" else "↗"
+        )
+        views.setTextViewText(
+            R.id.widget_open_nara,
+            if (getArmedState(prefs, NaraGaidenStore.KEY_NARA_ARMED_MS)) "N" else "n"
+        )
 
         val intent = Intent(context, NaraGaidenWidgetProvider::class.java).apply {
             action = ACTION_REFRESH
@@ -135,37 +142,56 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         )
         views.setOnClickPendingIntent(R.id.widget_refresh, pendingIntent)
 
-        val openIntent = Intent(context, NaraGaidenWidgetProvider::class.java).apply {
-            action = ACTION_OPEN
+        val openGaidenIntent = Intent(context, NaraGaidenWidgetProvider::class.java).apply {
+            action = ACTION_OPEN_GAIDEN
         }
-        val openPendingIntent = PendingIntent.getBroadcast(
+        val openGaidenPendingIntent = PendingIntent.getBroadcast(
             context,
             2,
-            openIntent,
+            openGaidenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        views.setOnClickPendingIntent(R.id.widget_open, openPendingIntent)
+        views.setOnClickPendingIntent(R.id.widget_open_gaiden, openGaidenPendingIntent)
+
+        val openNaraIntent = Intent(context, NaraGaidenWidgetProvider::class.java).apply {
+            action = ACTION_OPEN_NARA
+        }
+        val openNaraPendingIntent = PendingIntent.getBroadcast(
+            context,
+            3,
+            openNaraIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        views.setOnClickPendingIntent(R.id.widget_open_nara, openNaraPendingIntent)
         return views
     }
 
     private fun handleOpenTap(
         context: Context,
         appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray
+        appWidgetIds: IntArray,
+        target: LaunchTarget
     ) {
         val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
-        val armedMs = prefs.getLong(NaraGaidenStore.KEY_ARMED_MS, 0L)
+        val armedKey = target.armedKey
+        val armedMs = prefs.getLong(armedKey, 0L)
         val isArmed = armedMs > 0 && now - armedMs <= ARM_WINDOW_MS
 
         if (isArmed) {
-            prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
+            clearLaunchArmedState(prefs)
             updateOpenUi(context, appWidgetManager, appWidgetIds, showPrompt = false)
-            NaraGaidenLauncher.launchNaraApp(context)
+            when (target) {
+                LaunchTarget.GAIDEN -> NaraGaidenLauncher.launchGaidenApp(context)
+                LaunchTarget.NARA -> NaraGaidenLauncher.launchNaraApp(context)
+            }
             return
         }
 
-        prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, now) }
+        prefs.edit {
+            clearLaunchArmedState(this)
+            putLong(armedKey, now)
+        }
         updateOpenUi(context, appWidgetManager, appWidgetIds, showPrompt = true)
     }
 
@@ -176,25 +202,49 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         showPrompt: Boolean
     ) {
         val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
-        val armed = getArmedState(prefs)
         val views = RemoteViews(context.packageName, R.layout.widget_nara)
-        views.setTextViewText(R.id.widget_open, if (armed) "⇗" else "↗")
-        val statusText = if (showPrompt) PROMPT_TEXT else READY_TEXT
+        val gaidenArmed = getArmedState(prefs, NaraGaidenStore.KEY_GAIDEN_ARMED_MS)
+        val naraArmed = getArmedState(prefs, NaraGaidenStore.KEY_NARA_ARMED_MS)
+        views.setTextViewText(R.id.widget_open_gaiden, if (gaidenArmed) "⇗" else "↗")
+        views.setTextViewText(R.id.widget_open_nara, if (naraArmed) "N" else "n")
+        val statusText = if (showPrompt) {
+            when {
+                gaidenArmed -> PROMPT_TEXT_GAIDEN
+                naraArmed -> PROMPT_TEXT_NARA
+                else -> READY_TEXT
+            }
+        } else {
+            READY_TEXT
+        }
         views.setTextViewText(R.id.widget_status, statusText)
         appWidgetIds.forEach { appWidgetManager.partiallyUpdateAppWidget(it, views) }
     }
 
-    private fun getArmedState(prefs: android.content.SharedPreferences): Boolean {
-        val armedMs = prefs.getLong(NaraGaidenStore.KEY_ARMED_MS, 0L)
+    private fun getArmedState(
+        prefs: android.content.SharedPreferences,
+        key: String
+    ): Boolean {
+        val armedMs = prefs.getLong(key, 0L)
         if (armedMs <= 0L) {
             return false
         }
         val now = System.currentTimeMillis()
         if (now - armedMs > ARM_WINDOW_MS) {
-            prefs.edit { putLong(NaraGaidenStore.KEY_ARMED_MS, 0L) }
+            prefs.edit { putLong(key, 0L) }
             return false
         }
         return true
+    }
+
+    private fun clearLaunchArmedState(prefs: android.content.SharedPreferences) {
+        prefs.edit {
+            clearLaunchArmedState(this)
+        }
+    }
+
+    private fun clearLaunchArmedState(editor: android.content.SharedPreferences.Editor) {
+        editor.putLong(NaraGaidenStore.KEY_GAIDEN_ARMED_MS, 0L)
+        editor.putLong(NaraGaidenStore.KEY_NARA_ARMED_MS, 0L)
     }
 
     private fun scheduleTick(context: Context) {
@@ -228,11 +278,18 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
     companion object {
         const val ACTION_REFRESH = "com.nara.gaiden.ACTION_REFRESH"
         const val ACTION_TICK = "com.nara.gaiden.ACTION_TICK"
-        const val ACTION_OPEN = "com.nara.gaiden.ACTION_OPEN"
+        const val ACTION_OPEN_GAIDEN = "com.nara.gaiden.ACTION_OPEN_GAIDEN"
+        const val ACTION_OPEN_NARA = "com.nara.gaiden.ACTION_OPEN_NARA"
         private const val TICK_INTERVAL_MS = 5 * 60 * 1000L
         private const val ARM_WINDOW_MS = 2_000L
         private const val READY_TEXT = "Nara Gaiden"
-        private const val PROMPT_TEXT = "Tap 2x to launch Nara Baby"
+        private const val PROMPT_TEXT_GAIDEN = "Tap 2x to launch Nara Gaiden"
+        private const val PROMPT_TEXT_NARA = "Tap 2x to launch Nara Baby"
         private val refreshInFlight = AtomicBoolean(false)
+    }
+
+    private enum class LaunchTarget(val armedKey: String) {
+        GAIDEN(NaraGaidenStore.KEY_GAIDEN_ARMED_MS),
+        NARA(NaraGaidenStore.KEY_NARA_ARMED_MS)
     }
 }

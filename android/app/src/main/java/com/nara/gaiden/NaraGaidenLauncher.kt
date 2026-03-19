@@ -7,6 +7,17 @@ import android.net.Uri
 object NaraGaidenLauncher {
     private const val NARA_PACKAGE = "com.naraorganics.nara"
 
+    fun launchGaidenApp(context: Context) {
+        val launch = Intent(context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            context.startActivity(launch)
+        } catch (_: Exception) {
+            return
+        }
+    }
+
     fun launchNaraApp(context: Context) {
         val pm = context.packageManager
         val launch = pm.getLaunchIntentForPackage(NARA_PACKAGE)
