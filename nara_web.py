@@ -232,6 +232,25 @@ def bottle_volume(payload):
     return None, unit
 
 
+def bottle_milk_components(payload):
+    unit = payload.get("bottleVolumeUnit") or payload.get("bottleFormulaVolumeUnit") or payload.get(
+        "bottleBreastMilkVolumeUnit"
+    )
+    breast = None
+    formula = None
+    for prefix, key in (("bottleBreastMilkVolume", "breast"), ("bottleFormulaVolume", "formula")):
+        n = to_number(payload.get(f"{prefix}Num"))
+        e = to_number(payload.get(f"{prefix}Exp"))
+        if n is None or e is None:
+            continue
+        value = n * (10 ** (-e))
+        if key == "breast":
+            breast = value
+        else:
+            formula = value
+    return breast, formula, unit
+
+
 def diaper_label(ev):
     if not ev:
         return "unknown"
@@ -733,6 +752,10 @@ def is_night_hour(hour, night_start_hour):
 def milk_totals_by_day(events, child_map):
     by_child_day = {}
     by_child_day_hour = {}
+    breast_by_child_day = {}
+    breast_by_child_day_hour = {}
+    formula_by_child_day = {}
+    formula_by_child_day_hour = {}
     feed_counts_by_child_day = {}
     feed_counts_by_child_day_hour = {}
     diaper_counts_by_child_day = {}
@@ -784,6 +807,25 @@ def milk_totals_by_day(events, child_map):
         child_day_hours = by_child_day_hour.setdefault(child_key, {})
         day_hours = child_day_hours.setdefault(day_key, {})
         day_hours[hour] = day_hours.get(hour, 0.0) + volume_ml
+
+        breast_volume, formula_volume, component_unit = bottle_milk_components(payload)
+        if breast_volume is not None or formula_volume is not None:
+            breast_ml = normalize_milk_to_ml(breast_volume, component_unit) if breast_volume is not None else 0.0
+            formula_ml = normalize_milk_to_ml(formula_volume, component_unit) if formula_volume is not None else 0.0
+            if breast_ml is None or formula_ml is None:
+                skipped_units += 1
+            else:
+                child_breast_days = breast_by_child_day.setdefault(child_key, {})
+                child_breast_days[day_key] = child_breast_days.get(day_key, 0.0) + breast_ml
+                child_breast_day_hours = breast_by_child_day_hour.setdefault(child_key, {})
+                breast_day_hours = child_breast_day_hours.setdefault(day_key, {})
+                breast_day_hours[hour] = breast_day_hours.get(hour, 0.0) + breast_ml
+
+                child_formula_days = formula_by_child_day.setdefault(child_key, {})
+                child_formula_days[day_key] = child_formula_days.get(day_key, 0.0) + formula_ml
+                child_formula_day_hours = formula_by_child_day_hour.setdefault(child_key, {})
+                formula_day_hours = child_formula_day_hours.setdefault(day_key, {})
+                formula_day_hours[hour] = formula_day_hours.get(hour, 0.0) + formula_ml
         child_day_counts = feed_counts_by_child_day.setdefault(child_key, {})
         child_day_counts[day_key] = child_day_counts.get(day_key, 0) + 1
         child_day_hour_counts = feed_counts_by_child_day_hour.setdefault(child_key, {})
@@ -998,6 +1040,10 @@ def milk_totals_by_day(events, child_map):
     for idx, child_key in enumerate(series_child_keys):
         day_totals = by_child_day.get(child_key, {})
         day_hour_totals = by_child_day_hour.get(child_key, {})
+        breast_day_totals = breast_by_child_day.get(child_key, {})
+        breast_day_hour_totals = breast_by_child_day_hour.get(child_key, {})
+        formula_day_totals = formula_by_child_day.get(child_key, {})
+        formula_day_hour_totals = formula_by_child_day_hour.get(child_key, {})
         day_feed_counts = feed_counts_by_child_day.get(child_key, {})
         day_hour_feed_counts = feed_counts_by_child_day_hour.get(child_key, {})
         diaper_day_counts = diaper_counts_by_child_day.get(child_key, {})
@@ -1009,6 +1055,7 @@ def milk_totals_by_day(events, child_map):
         daily_points = []
         cumulative_points = []
         avg_milk_per_feed_points = []
+        breast_milk_percent_points = []
         diaper_points = []
         max_gap_points = []
         max_gap_periods = []
@@ -1016,12 +1063,16 @@ def milk_totals_by_day(events, child_map):
         for day_key in labels:
             daily_value = day_totals.get(day_key, 0.0)
             daily_feed_count = int(day_feed_counts.get(day_key, 0))
+            breast_value = breast_day_totals.get(day_key, 0.0)
+            formula_value = formula_day_totals.get(day_key, 0.0)
+            mix_total = breast_value + formula_value
             running_total += daily_value
             daily_points.append(daily_value)
             cumulative_points.append(running_total)
             avg_milk_per_feed_points.append(
                 daily_value / daily_feed_count if daily_feed_count > 0 else None
             )
+            breast_milk_percent_points.append((breast_value * 100.0 / mix_total) if mix_total > 0 else None)
             diaper_points.append(diaper_day_counts.get(day_key, 0))
 
             gap_stat = child_gap_stats.get(day_key)
@@ -1045,6 +1096,7 @@ def milk_totals_by_day(events, child_map):
         max_gap_period_display = _mask_series_with_numeric(max_gap_periods, max_gap_display)
         avg_gap_display = _trim_optional_series(avg_gap_points, decimals=2)
         avg_milk_per_feed_display = _trim_optional_series(avg_milk_per_feed_points, decimals=1)
+        breast_milk_percent_display = _trim_optional_series(breast_milk_percent_points, decimals=1)
         diaper_display = _trim_count_series(diaper_points)
         if max_gap_display is None:
             max_gap_display = [None] * len(labels)
@@ -1054,6 +1106,8 @@ def milk_totals_by_day(events, child_map):
             avg_gap_display = [None] * len(labels)
         if avg_milk_per_feed_display is None:
             avg_milk_per_feed_display = [None] * len(labels)
+        if breast_milk_percent_display is None:
+            breast_milk_percent_display = [None] * len(labels)
         if diaper_display is None:
             diaper_display = [None] * len(labels)
 
@@ -1067,6 +1121,8 @@ def milk_totals_by_day(events, child_map):
             night_running_total = 0.0
             day_avg_milk_per_feed_points = []
             night_avg_milk_per_feed_points = []
+            day_breast_milk_percent_points = []
+            night_breast_milk_percent_points = []
             day_diaper_points = []
             night_diaper_points = []
             day_gap_max_points = []
@@ -1086,13 +1142,31 @@ def milk_totals_by_day(events, child_map):
                         day_value += amount
 
                 hour_feed_counts = day_hour_feed_counts.get(day_key, {})
+                breast_hour_totals = breast_day_hour_totals.get(day_key, {})
+                formula_hour_totals = formula_day_hour_totals.get(day_key, {})
                 day_feed_count = 0
                 night_feed_count = 0
+                day_breast_value = 0.0
+                night_breast_value = 0.0
+                day_formula_value = 0.0
+                night_formula_value = 0.0
                 for hour, count in hour_feed_counts.items():
                     if is_night_hour(hour, night_start_hour):
                         night_feed_count += count
                     else:
                         day_feed_count += count
+
+                for hour, amount in breast_hour_totals.items():
+                    if is_night_hour(hour, night_start_hour):
+                        night_breast_value += amount
+                    else:
+                        day_breast_value += amount
+
+                for hour, amount in formula_hour_totals.items():
+                    if is_night_hour(hour, night_start_hour):
+                        night_formula_value += amount
+                    else:
+                        day_formula_value += amount
 
                 day_running_total += day_value
                 day_daily_points.append(day_value)
@@ -1100,11 +1174,19 @@ def milk_totals_by_day(events, child_map):
                 day_avg_milk_per_feed_points.append(
                     day_value / day_feed_count if day_feed_count > 0 else None
                 )
+                day_mix_total = day_breast_value + day_formula_value
+                day_breast_milk_percent_points.append(
+                    (day_breast_value * 100.0 / day_mix_total) if day_mix_total > 0 else None
+                )
                 night_running_total += night_value
                 night_daily_points.append(night_value)
                 night_cumulative_points.append(night_running_total)
                 night_avg_milk_per_feed_points.append(
                     night_value / night_feed_count if night_feed_count > 0 else None
+                )
+                night_mix_total = night_breast_value + night_formula_value
+                night_breast_milk_percent_points.append(
+                    (night_breast_value * 100.0 / night_mix_total) if night_mix_total > 0 else None
                 )
 
                 diaper_hour_counts = diaper_day_hour_counts.get(day_key, {})
@@ -1180,6 +1262,12 @@ def milk_totals_by_day(events, child_map):
             night_avg_milk_per_feed_display = _trim_optional_series(
                 night_avg_milk_per_feed_points, decimals=1
             )
+            day_breast_milk_percent_display = _trim_optional_series(
+                day_breast_milk_percent_points, decimals=1
+            )
+            night_breast_milk_percent_display = _trim_optional_series(
+                night_breast_milk_percent_points, decimals=1
+            )
             day_gap_max_period_display = _mask_series_with_numeric(day_gap_max_periods, day_gap_max_display)
             night_gap_max_period_display = _mask_series_with_numeric(
                 night_gap_max_periods, night_gap_max_display
@@ -1194,6 +1282,8 @@ def milk_totals_by_day(events, child_map):
                 day_gap_avg_display = [None] * len(labels)
             if day_avg_milk_per_feed_display is None:
                 day_avg_milk_per_feed_display = [None] * len(labels)
+            if day_breast_milk_percent_display is None:
+                day_breast_milk_percent_display = [None] * len(labels)
             if night_gap_max_display is None:
                 night_gap_max_display = [None] * len(labels)
             if night_gap_max_period_display is None:
@@ -1202,6 +1292,8 @@ def milk_totals_by_day(events, child_map):
                 night_gap_avg_display = [None] * len(labels)
             if night_avg_milk_per_feed_display is None:
                 night_avg_milk_per_feed_display = [None] * len(labels)
+            if night_breast_milk_percent_display is None:
+                night_breast_milk_percent_display = [None] * len(labels)
             if day_diaper_display is None:
                 day_diaper_display = [None] * len(labels)
             if night_diaper_display is None:
@@ -1212,6 +1304,7 @@ def milk_totals_by_day(events, child_map):
                     "daily": day_daily_display,
                     "cumulative": day_cumulative_display,
                     "avgMilkPerFeed": day_avg_milk_per_feed_display,
+                    "breastMilkPercent": day_breast_milk_percent_display,
                     "diaper": day_diaper_display,
                     "maxGap": day_gap_max_display,
                     "maxGapPeriod": day_gap_max_period_display,
@@ -1221,6 +1314,7 @@ def milk_totals_by_day(events, child_map):
                     "daily": night_daily_display,
                     "cumulative": night_cumulative_display,
                     "avgMilkPerFeed": night_avg_milk_per_feed_display,
+                    "breastMilkPercent": night_breast_milk_percent_display,
                     "diaper": night_diaper_display,
                     "maxGap": night_gap_max_display,
                     "maxGapPeriod": night_gap_max_period_display,
@@ -1234,6 +1328,7 @@ def milk_totals_by_day(events, child_map):
                 "daily": daily_display,
                 "cumulative": cumulative_display,
                 "avgMilkPerFeed": avg_milk_per_feed_display,
+                "breastMilkPercent": breast_milk_percent_display,
                 "diaper": diaper_display,
                 "maxGap": max_gap_display,
                 "maxGapPeriod": max_gap_period_display,
@@ -1406,6 +1501,10 @@ def build_plot_html(events, child_map, generated_at):
       return plotMode === "milk-daily" || plotMode === "milk-cumulative" || plotMode === "milk-average-feed";
     }}
 
+    function isPercentMode(plotMode) {{
+      return plotMode === "milk-breast-percent";
+    }}
+
     function isCumulativeMode(plotMode) {{
       return plotMode === "milk-cumulative";
     }}
@@ -1420,6 +1519,9 @@ def build_plot_html(events, child_map, generated_at):
       }}
       if (plotMode === "milk-average-feed") {{
         return "avg milk per feed";
+      }}
+      if (plotMode === "milk-breast-percent") {{
+        return "breast milk share";
       }}
       if (plotMode === "diaper-daily") {{
         return "daily diapers";
@@ -1437,6 +1539,9 @@ def build_plot_html(events, child_map, generated_at):
       if (isMilkMode(plotMode)) {{
         return "mL";
       }}
+      if (isPercentMode(plotMode)) {{
+        return "%";
+      }}
       if (plotMode === "diaper-daily") {{
         return "changes";
       }}
@@ -1445,6 +1550,9 @@ def build_plot_html(events, child_map, generated_at):
 
     function plotValueDecimals(plotMode, smoothWindow) {{
       if (isMilkMode(plotMode)) {{
+        return 1;
+      }}
+      if (isPercentMode(plotMode)) {{
         return 1;
       }}
       if (plotMode === "diaper-daily") {{
@@ -1495,6 +1603,9 @@ def build_plot_html(events, child_map, generated_at):
       if (plotMode === "milk-average-feed") {{
         return split[period].avgMilkPerFeed || [];
       }}
+      if (plotMode === "milk-breast-percent") {{
+        return split[period].breastMilkPercent || [];
+      }}
       if (plotMode === "gap-max") {{
         return split[period].maxGap || [];
       }}
@@ -1522,6 +1633,9 @@ def build_plot_html(events, child_map, generated_at):
       }}
       if (plotMode === "milk-average-feed") {{
         return entry.avgMilkPerFeed || [];
+      }}
+      if (plotMode === "milk-breast-percent") {{
+        return entry.breastMilkPercent || [];
       }}
       if (plotMode === "gap-max") {{
         return entry.maxGap || [];
@@ -1718,6 +1832,10 @@ def build_plot_html(events, child_map, generated_at):
         baseTitle = smoothWindow <= 1
           ? "Average milk per feed (mL)"
           : `Average milk per feed (mL, ${{smoothWindow}}-day moving avg)`;
+      }} else if (plotMode === "milk-breast-percent") {{
+        baseTitle = smoothWindow <= 1
+          ? "Breast milk share of bottle intake (%)"
+          : `Breast milk share of bottle intake (%, ${{smoothWindow}}-day moving avg)`;
       }} else if (plotMode === "diaper-daily") {{
         baseTitle = "Diaper changes per day";
       }} else if (plotMode === "gap-max") {{
@@ -1729,7 +1847,7 @@ def build_plot_html(events, child_map, generated_at):
       }} else {{
         baseTitle = `Milk eaten per day (mL, ${{smoothWindow}}-day moving avg)`;
       }}
-      if (plotMode !== "milk-cumulative" && !isMilkMode(plotMode) && smoothWindow > 1) {{
+      if (plotMode !== "milk-cumulative" && !isMilkMode(plotMode) && !isPercentMode(plotMode) && smoothWindow > 1) {{
         baseTitle = `${{baseTitle}} (${{smoothWindow}}-day moving avg)`;
       }}
       if (!splitEnabled) {{
@@ -1786,6 +1904,19 @@ def build_plot_html(events, child_map, generated_at):
         return;
       }}
       textEl.textContent = splitText(splitEnabled, nightStartHour);
+    }}
+
+    function updateYAxisBounds(targetChart, plotMode) {{
+      if (!targetChart || !targetChart.options || !targetChart.options.scales || !targetChart.options.scales.y) {{
+        return;
+      }}
+      if (isPercentMode(plotMode)) {{
+        targetChart.options.scales.y.min = 0;
+        targetChart.options.scales.y.max = 100;
+        return;
+      }}
+      delete targetChart.options.scales.y.min;
+      delete targetChart.options.scales.y.max;
     }}
 
     function updateVisibleRange(chart) {{
@@ -1916,6 +2047,11 @@ def build_plot_html(events, child_map, generated_at):
                   const splitSuffix = context.chart.$splitEnabled ? ", split" : "";
                   const unit = plotUnit(plotMode);
                   const decimals = plotValueDecimals(plotMode, windowSize);
+                  if (isPercentMode(plotMode)) {{
+                    const breastPercent = context.parsed.y;
+                    const formulaPercent = Number((100 - breastPercent).toFixed(decimals));
+                    return `${{context.dataset.label}}: ${{breastPercent.toFixed(decimals)}}% breast milk, ${{formulaPercent.toFixed(decimals)}}% formula${{smoothSuffix}}${{splitSuffix}}`;
+                  }}
                   const mainLine = `${{context.dataset.label}}: ${{context.parsed.y.toFixed(decimals)}} ${{unit}} (${{plotModeLabel(plotMode)}}${{smoothSuffix}}${{splitSuffix}})`;
                   if (plotMode === "gap-max" && windowSize <= 1) {{
                     const periods = context.dataset.maxGapPeriods || [];
@@ -1971,6 +2107,7 @@ def build_plot_html(events, child_map, generated_at):
       chart.$smoothWindow = initialSmoothWindow;
       chart.$splitEnabled = initialSplitEnabled;
       chart.$nightStart = initialNightStart;
+      updateYAxisBounds(chart, initialMode);
       if (modeSelect) {{
         modeSelect.value = initialMode;
       }}
@@ -2003,6 +2140,7 @@ def build_plot_html(events, child_map, generated_at):
       chart.data.datasets = buildDatasets(mode, smoothWindow, splitEnabled, nightStart);
       applyHiddenSeriesState(chart);
       chart.options.scales.y.title.text = yAxisTitle(mode, smoothWindow, splitEnabled, nightStart);
+      updateYAxisBounds(chart, mode);
       chart.update(animationMode);
       updateSmoothingLabel(mode, smoothWindow);
       updateSplitLabel(splitEnabled, nightStart);
@@ -2079,6 +2217,7 @@ def build_plot_html(events, child_map, generated_at):
         <option value=\"milk-daily\" selected>Daily Milk Total</option>
         <option value=\"milk-cumulative\">Cumulative Milk Total</option>
         <option value=\"milk-average-feed\">Average Milk Per Feed</option>
+        <option value=\"milk-breast-percent\">Breast Milk vs Formula %</option>
         <option value=\"diaper-daily\">Daily Diaper Changes</option>
         <option value=\"gap-max\">Max Feeding Gap</option>
         <option value=\"gap-avg\">Average Feeding Gap</option>
