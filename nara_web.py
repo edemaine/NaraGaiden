@@ -499,8 +499,10 @@ def build_html(
     .col-diaper-time { width: 26%; }
     """).strip()
     script = """
+    const REFRESH_INTERVAL_MS = 60000;
     let lastSuccessMs = Date.now();
     let staleActive = false;
+    let refreshPromise = null;
 
     function openCleanWindow() {
       const features = "toolbar=no,location=no,menubar=no,scrollbars=yes,resizable=yes";
@@ -529,6 +531,10 @@ def build_html(
     }
 
     async function refreshContent() {
+      if (refreshPromise) {
+        return refreshPromise;
+      }
+      refreshPromise = (async () => {
       try {
         const url = new URL(window.location.href);
         url.searchParams.set("_", Date.now().toString());
@@ -557,10 +563,28 @@ def build_html(
         staleActive = true;
         updateStaleNote();
         console.warn("Refresh error", err);
+      } finally {
+        refreshPromise = null;
       }
+      })();
+      return refreshPromise;
     }
 
-    setInterval(refreshContent, 60000);
+    function refreshIfStale() {
+      if ((Date.now() - lastSuccessMs) < REFRESH_INTERVAL_MS) {
+        return;
+      }
+      refreshContent();
+    }
+
+    window.addEventListener("pageshow", refreshIfStale);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        refreshIfStale();
+      }
+    });
+
+    setInterval(refreshContent, REFRESH_INTERVAL_MS);
     """.strip()
     return f"""<!doctype html>
 <html>
