@@ -83,19 +83,22 @@ struct NaraChild: Codable, Identifiable {
     let medicationToday: Int?
     let bathsToday: Int?
 
-    var displayName: String {
+    var displayIndicators: String {
         let vitaminCount = max(vitaminsToday ?? 0, 0)
         let medicationCount = max(medicationToday ?? 0, 0)
         let bathCount = max(bathsToday ?? 0, 0)
         let alertIndicator = poopAlertText() == nil ? "" : NaraAlerts.warningEmoji
-        let indicators = alertIndicator
+        return alertIndicator
             + String(repeating: "💊", count: max(vitaminCount, 0))
             + String(repeating: "💉", count: max(medicationCount, 0))
             + String(repeating: "🛁", count: max(bathCount, 0))
-        if indicators.isEmpty {
+    }
+
+    var displayName: String {
+        if displayIndicators.isEmpty {
             return name
         }
-        return "\(name) \(indicators)"
+        return "\(name) \(displayIndicators)"
     }
 
     func poopAlertText(now: Date = Date()) -> String? {

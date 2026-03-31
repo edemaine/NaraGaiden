@@ -124,14 +124,11 @@ struct NaraGaidenLockWidgetEntryView: View {
                 ForEach(payload.children, id: \.id) { child in
                     if isAccessoryRectangular {
                         HStack(alignment: .center, spacing: tableHStackSpacing) {
-                            Text(child.displayName)
-                                .font(nameFont)
-                                .fontWeight(.semibold)
+                            childNameText(child)
                                 .frame(width: babyWidth, alignment: .leading)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .minimumScaleFactor(0.8)
 
                             Text(feedDetailLabel(child.feed.label))
                                 .lineLimit(1)
@@ -144,17 +141,14 @@ struct NaraGaidenLockWidgetEntryView: View {
                         .font(rowFont)
                     } else {
                         HStack(alignment: .top, spacing: tableHStackSpacing) {
-                            Text(child.displayName)
-                                .font(nameFont)
-                                .fontWeight(.semibold)
+                            childNameText(child)
                                 .frame(width: babyWidth, alignment: .leading)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .minimumScaleFactor(0.8)
 
                             VStack(alignment: .leading, spacing: detailSpacing) {
-                                Text(child.feed.label)
+                                Text(normalizedVolumeUnits(child.feed.label))
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.7)
                                 timeBadge(text: child.feed.relativeString(), beginDt: child.feed.beginDt)
@@ -222,12 +216,33 @@ struct NaraGaidenLockWidgetEntryView: View {
             .minimumScaleFactor(0.7)
     }
 
-    private func feedDetailLabel(_ label: String) -> String {
-        guard let start = label.firstIndex(of: "("), let end = label.lastIndex(of: ")"), start < end else {
-            return label
+    private func childNameText(_ child: NaraChild) -> Text {
+        let nameText = Text(verbatim: child.name)
+            .font(nameFont)
+            .fontWeight(.semibold)
+        guard !child.displayIndicators.isEmpty else {
+            return nameText
         }
-        let inner = label.index(after: start)..<end
-        return String(label[inner]).trimmingCharacters(in: .whitespaces)
+        return nameText
+            + Text(verbatim: " ").font(nameFont)
+            + Text(verbatim: child.displayIndicators).font(indicatorFont)
+    }
+
+    private func feedDetailLabel(_ label: String) -> String {
+        let normalized = normalizedVolumeUnits(label)
+        guard let start = normalized.firstIndex(of: "("), let end = normalized.lastIndex(of: ")"), start < end else {
+            return normalized
+        }
+        let inner = normalized.index(after: start)..<end
+        return String(normalized[inner]).trimmingCharacters(in: .whitespaces)
+    }
+
+    private func normalizedVolumeUnits(_ label: String) -> String {
+        label
+            .replacingOccurrences(of: " ML", with: "mL")
+            .replacingOccurrences(of: " ml", with: "mL")
+            .replacingOccurrences(of: " Ml", with: "mL")
+            .replacingOccurrences(of: " mL", with: "mL")
     }
 
     private func shortRelativeString(beginDt: Int64?) -> String {
@@ -269,20 +284,20 @@ struct NaraGaidenLockWidgetEntryView: View {
 
     private var babyColumnRatio: CGFloat {
         if family == .systemMedium {
-            return 0.16
+            return 0.18
         }
         if isAccessoryRectangular {
-            return 0.34
+            return 0.36
         }
         return 0.2
     }
 
     private var feedColumnRatio: CGFloat {
         if family == .systemMedium {
-            return 0.44
+            return 0.42
         }
         if isAccessoryRectangular {
-            return 0.26
+            return 0.24
         }
         return 0.4
     }
@@ -319,6 +334,16 @@ struct NaraGaidenLockWidgetEntryView: View {
             return .caption2
         }
         return .caption2
+    }
+
+    private var indicatorFont: Font {
+        if family == .systemMedium {
+            return .system(size: 10)
+        }
+        if isAccessoryRectangular {
+            return .system(size: 7)
+        }
+        return .system(size: 9)
     }
 
     private var badgeFont: Font {
