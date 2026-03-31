@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "NaraGaidenAndroid"
 include(":app")
+include(":shared")
+include(":wear")

@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Nara Wear</string>
+    <string name="tile_name">Nara Snapshot</string>
+    <string name="complication_name">Nara Status</string>
+    <string name="refresh_watch">Sync</string>
+    <string name="child_header">Child</string>
+    <string name="feed_short">Feed</string>
+    <string name="diaper_short">Diap</string>
+    <string name="no_data">No synced data yet.</string>
+    <string name="status_ready">Synced from phone</string>
+    <string name="status_refreshing">Refreshing...</string>
+    <string name="status_waiting">Waiting for phone</string>
+    <string name="status_stale">Showing stale data</string>
+    <string name="status_no_phone">Phone not connected</string>
+    <string name="status_sync_failed">Sync failed</string>
+    <string name="status_refresh_timeout">Refresh timed out</string>
+</resources>

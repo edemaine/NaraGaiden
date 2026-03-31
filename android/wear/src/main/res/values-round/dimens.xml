@@ -1,0 +1,7 @@
+<resources>
+    <dimen name="wear_screen_padding">6dp</dimen>
+    <dimen name="wear_content_shift">-5dp</dimen>
+    <dimen name="wear_content_bottom_padding">18dp</dimen>
+    <dimen name="wear_section_spacing">8dp</dimen>
+    <dimen name="wear_section_spacing_tight">4dp</dimen>
+</resources>

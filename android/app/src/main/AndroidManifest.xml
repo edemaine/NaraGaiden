@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.nara.gaiden">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <queries>
         <package android:name="com.naraorganics.nara" />
@@ -44,5 +44,14 @@
             android:name=".NaraGaidenWidgetService"
             android:exported="false"
             android:permission="android.permission.BIND_REMOTEVIEWS" />
+
+        <service
+            android:name=".NaraGaidenWearListenerService"
+            android:exported="true"
+            tools:ignore="WearableBindListener">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.BIND_LISTENER" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

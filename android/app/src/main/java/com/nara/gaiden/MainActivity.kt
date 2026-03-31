@@ -107,6 +107,7 @@ class MainActivity : AppCompatActivity() {
                     renderRows(rows)
                 }
                 notifyWidgetFromCache()
+                NaraGaidenWearBridge.syncCachedSnapshot(applicationContext)
             } catch (e: Exception) {
                 val prefs = getSharedPreferences(NaraGaidenStore.PREFS_NAME, MODE_PRIVATE)
                 val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null) ?: "as of --"

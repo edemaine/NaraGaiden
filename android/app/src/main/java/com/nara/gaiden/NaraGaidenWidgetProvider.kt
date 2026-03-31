@@ -52,7 +52,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         if (!refreshInFlight.compareAndSet(false, true)) {
             return
         }
-        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(       NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         clearLaunchArmedState(prefs)
         val lastUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)
         val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
@@ -73,6 +73,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
                         putLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, successMs)
                         putBoolean(NaraGaidenStore.KEY_LAST_ERROR, false)
                     }
+                    NaraGaidenWearBridge.syncCachedSnapshot(context.applicationContext)
                     NaraGaidenWidgetState.ready(result.updatedLine)
                 } catch (e: Exception) {
                     val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null)

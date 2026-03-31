@@ -144,6 +144,35 @@ object NaraGaidenFormat {
         return parts.joinToString(" ") + " ago"
     }
 
+    fun formatRelativeCompact(beginDt: Long?): String {
+        if (beginDt == null) {
+            return "--"
+        }
+        val deltaMinutes = ((System.currentTimeMillis() - beginDt) / 60000).coerceAtLeast(0)
+        if (deltaMinutes <= 0L) {
+            return "now"
+        }
+        val days = deltaMinutes / (24L * 60L)
+        val hours = (deltaMinutes / 60L) % 24L
+        val minutes = deltaMinutes % 60L
+
+        if (days > 0L) {
+            return if (hours > 0L) {
+                "${days}d${hours}h"
+            } else {
+                "${days}d"
+            }
+        }
+        if (deltaMinutes < 60L) {
+            return "${minutes}m"
+        }
+        return if (minutes > 0L) {
+            "${deltaMinutes / 60L}h${minutes}m"
+        } else {
+            "${deltaMinutes / 60L}h"
+        }
+    }
+
     fun timeColors(beginDt: Long?): TimeColors {
         if (beginDt == null) {
             return TimeColors(Color.parseColor("#333333"), Color.parseColor("#f2f2f2"))
