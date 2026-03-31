@@ -11,7 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
-import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.TableLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -31,7 +31,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var alertsView: TextView
     private lateinit var updatedView: TextView
     private lateinit var statusView: TextView
-    private lateinit var refreshButton: ImageButton
+    private lateinit var refreshRegion: View
+    private lateinit var refreshIcon: ImageView
     private val refreshInFlight = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var statusOverride: String? = null
@@ -39,7 +40,7 @@ class MainActivity : AppCompatActivity() {
         if (!refreshInFlight.compareAndSet(true, false)) {
             return@Runnable
         }
-        refreshButton.isEnabled = true
+        setRefreshEnabled(true)
         statusOverride = getString(R.string.status_refresh_timeout)
         loadFromCache()
         Log.w(TAG, "Watch refresh timed out")
@@ -49,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             mainHandler.removeCallbacks(refreshTimeoutRunnable)
             refreshInFlight.set(false)
-            refreshButton.isEnabled = true
+            setRefreshEnabled(true)
             statusOverride = null
             loadFromCache()
         }
@@ -64,9 +65,10 @@ class MainActivity : AppCompatActivity() {
         alertsView = findViewById(R.id.wear_alerts)
         updatedView = findViewById(R.id.wear_updated)
         statusView = findViewById(R.id.wear_status)
-        refreshButton = findViewById(R.id.wear_refresh)
+        refreshRegion = findViewById(R.id.wear_refresh_region)
+        refreshIcon = findViewById(R.id.wear_refresh_icon)
 
-        refreshButton.setOnClickListener {
+        refreshRegion.setOnClickListener {
             requestSnapshot()
         }
 
@@ -127,7 +129,7 @@ class MainActivity : AppCompatActivity() {
         statusOverride = getString(R.string.status_refreshing)
         statusView.text = statusOverride
         statusView.visibility = View.VISIBLE
-        refreshButton.isEnabled = false
+        setRefreshEnabled(false)
         mainHandler.removeCallbacks(refreshTimeoutRunnable)
         mainHandler.postDelayed(refreshTimeoutRunnable, REFRESH_TIMEOUT_MS)
         Log.d(TAG, "Watch requesting snapshot")
@@ -167,7 +169,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     mainHandler.removeCallbacks(refreshTimeoutRunnable)
                     refreshInFlight.set(false)
-                    refreshButton.isEnabled = true
+                    setRefreshEnabled(true)
                     statusOverride = error
                     loadFromCache()
                 }
@@ -220,13 +222,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun formatFeedLabel(label: String): String {
-        return label
-            .removePrefix("Bottle ")
-            .removePrefix("Bottle:")
-            .replace("(", "")
-            .replace(")", "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        return NaraGaidenFormat.compactFeedLabel(label)
+    }
+
+    private fun setRefreshEnabled(enabled: Boolean) {
+        refreshRegion.isEnabled = enabled
+        refreshRegion.isClickable = enabled
+        refreshIcon.alpha = if (enabled) 1f else 0.45f
     }
 
     companion object {

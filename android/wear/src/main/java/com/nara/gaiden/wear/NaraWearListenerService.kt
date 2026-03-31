@@ -23,6 +23,10 @@ class NaraWearListenerService : WearableListenerService() {
             putString(NaraGaidenStore.KEY_UPDATED, snapshot.updatedLine)
             putLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, snapshot.lastSuccessMs)
             putBoolean(NaraGaidenStore.KEY_LAST_ERROR, snapshot.hasError)
+            putLong(
+                NaraGaidenStore.KEY_WEAR_RENDER_ONLY_UNTIL_MS,
+                System.currentTimeMillis() + RENDER_ONLY_WINDOW_MS
+            )
         }
         NaraWearUiUpdater.requestAll(applicationContext)
         sendBroadcast(Intent(ACTION_SNAPSHOT_UPDATED).setPackage(packageName))
@@ -31,5 +35,6 @@ class NaraWearListenerService : WearableListenerService() {
     companion object {
         const val ACTION_SNAPSHOT_UPDATED = "com.nara.gaiden.wear.ACTION_SNAPSHOT_UPDATED"
         private const val TAG = "NaraWearWatch"
+        private const val RENDER_ONLY_WINDOW_MS = 5_000L
     }
 }

@@ -53,6 +53,7 @@ object NaraGaidenStore {
     const val KEY_LAST_ERROR = "last_error"
     const val KEY_GAIDEN_ARMED_MS = "gaiden_armed_ms"
     const val KEY_NARA_ARMED_MS = "nara_armed_ms"
+    const val KEY_WEAR_RENDER_ONLY_UNTIL_MS = "wear_render_only_until_ms"
 }
 
 object NaraGaidenContent {
@@ -114,6 +115,16 @@ object NaraGaidenContent {
 
 object NaraGaidenFormat {
     data class TimeColors(val bg: Int, val fg: Int)
+
+    fun compactFeedLabel(label: String): String {
+        return label
+            .removePrefix("Bottle ")
+            .removePrefix("Bottle:")
+            .replace("(", "")
+            .replace(")", "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
 
     fun formatRelative(beginDt: Long?): String {
         if (beginDt == null) {

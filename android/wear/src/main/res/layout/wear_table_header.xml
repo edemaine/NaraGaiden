@@ -10,34 +10,40 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="0.9"
+        android:letterSpacing="0.08"
         android:paddingHorizontal="4dp"
         android:paddingVertical="4dp"
         android:text="@string/child_header"
+        android:textAllCaps="true"
         android:textAppearance="@android:style/TextAppearance.DeviceDefault.Small"
         android:textColor="@color/wear_subtle"
-        android:textStyle="bold" />
+        android:textStyle="normal" />
 
     <TextView
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1.05"
         android:gravity="center_horizontal"
+        android:letterSpacing="0.08"
         android:paddingHorizontal="4dp"
         android:paddingVertical="4dp"
         android:text="@string/feed_short"
+        android:textAllCaps="true"
         android:textAppearance="@android:style/TextAppearance.DeviceDefault.Small"
         android:textColor="@color/wear_subtle"
-        android:textStyle="bold" />
+        android:textStyle="normal" />
 
     <TextView
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1.05"
         android:gravity="center_horizontal"
+        android:letterSpacing="0.08"
         android:paddingHorizontal="4dp"
         android:paddingVertical="4dp"
         android:text="@string/diaper_short"
+        android:textAllCaps="true"
         android:textAppearance="@android:style/TextAppearance.DeviceDefault.Small"
         android:textColor="@color/wear_subtle"
-        android:textStyle="bold" />
+        android:textStyle="normal" />
 </TableRow>

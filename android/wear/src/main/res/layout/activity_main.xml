@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clipToPadding="false"
-        app:layout_boxedEdges="bottom"
+        android:fillViewport="true"
         android:scrollbars="none">
 
         <LinearLayout
@@ -20,27 +20,49 @@
             android:translationY="@dimen/wear_content_shift"
             android:paddingBottom="@dimen/wear_content_bottom_padding">
 
-            <FrameLayout
+            <LinearLayout
+                android:id="@+id/wear_refresh_region"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingTop="@dimen/wear_header_vertical_padding"
+                android:paddingBottom="@dimen/wear_header_vertical_padding"
                 android:paddingStart="@dimen/wear_screen_padding"
                 android:paddingEnd="@dimen/wear_screen_padding">
 
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="top|center_horizontal"
                     android:gravity="center_horizontal"
                     android:orientation="vertical">
 
-                    <TextView
-                        android:id="@+id/wear_updated"
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textAppearance="@android:style/TextAppearance.DeviceDefault.Small"
-                        android:textColor="@color/wear_subtle" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/wear_updated"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textAppearance="@android:style/TextAppearance.DeviceDefault.Small"
+                            android:textColor="@color/wear_subtle" />
+
+                        <ImageView
+                            android:id="@+id/wear_refresh_icon"
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_marginStart="5dp"
+                            android:contentDescription="@string/refresh_watch"
+                            android:src="@drawable/ic_sync"
+                            android:tint="@color/wear_subtle" />
+                    </LinearLayout>
 
                     <TextView
                         android:id="@+id/wear_status"
@@ -54,18 +76,7 @@
                         android:textStyle="bold"
                         android:visibility="gone" />
                 </LinearLayout>
-
-                <ImageButton
-                    android:id="@+id/wear_refresh"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="top|end"
-                    android:background="@drawable/wear_action_bg"
-                    android:contentDescription="@string/refresh_watch"
-                    android:padding="6dp"
-                    android:src="@drawable/ic_sync"
-                    android:tint="@color/wear_text" />
-            </FrameLayout>
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/wear_alerts"
