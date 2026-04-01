@@ -23,6 +23,7 @@ class NaraWearListenerService : WearableListenerService() {
             putString(NaraGaidenStore.KEY_UPDATED, snapshot.updatedLine)
             putLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, snapshot.lastSuccessMs)
             putBoolean(NaraGaidenStore.KEY_LAST_ERROR, snapshot.hasError)
+            putLong(NaraGaidenStore.KEY_WEAR_REFRESHING_UNTIL_MS, 0L)
             putLong(
                 NaraGaidenStore.KEY_WEAR_RENDER_ONLY_UNTIL_MS,
                 System.currentTimeMillis() + RENDER_ONLY_WINDOW_MS

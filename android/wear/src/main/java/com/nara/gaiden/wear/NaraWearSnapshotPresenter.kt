@@ -10,6 +10,7 @@ data class NaraWearSnapshotSummary(
     val rows: List<NaraGaidenRow>,
     val alerts: List<String>,
     val updatedLine: String,
+    val ageLine: String?,
     val hasError: Boolean,
     val tileTitle: String,
     val tileBody: String,
@@ -28,6 +29,7 @@ object NaraWearSnapshotPresenter {
         val hasError = prefs.getBoolean(NaraGaidenStore.KEY_LAST_ERROR, false)
         val updatedLine = prefs.getString(NaraGaidenStore.KEY_UPDATED, null) ?: "as of --"
         val footer = NaraGaidenFormat.withStaleSuffix(updatedLine, lastSuccessMs, include = hasError)
+        val ageLine = NaraGaidenFormat.formatAgeLabel(lastSuccessMs, roundToNearestMinute = true)
         val rows = parseRows(rawJson)
         val alerts = rows.mapNotNull { it.poopAlertText() }
         val firstRow = rows.firstOrNull()
@@ -69,6 +71,7 @@ object NaraWearSnapshotPresenter {
             rows = rows,
             alerts = alerts,
             updatedLine = updatedLine,
+            ageLine = ageLine,
             hasError = hasError,
             tileTitle = tileTitle,
             tileBody = tileBody,

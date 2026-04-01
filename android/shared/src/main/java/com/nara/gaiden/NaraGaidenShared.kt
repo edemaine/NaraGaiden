@@ -54,6 +54,7 @@ object NaraGaidenStore {
     const val KEY_GAIDEN_ARMED_MS = "gaiden_armed_ms"
     const val KEY_NARA_ARMED_MS = "nara_armed_ms"
     const val KEY_WEAR_RENDER_ONLY_UNTIL_MS = "wear_render_only_until_ms"
+    const val KEY_WEAR_REFRESHING_UNTIL_MS = "wear_refreshing_until_ms"
 }
 
 object NaraGaidenContent {
@@ -245,11 +246,27 @@ object NaraGaidenFormat {
         if (!include || lastSuccessMs <= 0) {
             return updatedLine
         }
-        val minutes = ((System.currentTimeMillis() - lastSuccessMs) / 60000).coerceAtLeast(0)
-        if (minutes == 0L) {
-            return updatedLine
-        }
-        val suffix = if (minutes == 1L) "1 min old" else "$minutes mins old"
+        val suffix = formatAgeLabel(lastSuccessMs) ?: return updatedLine
         return "$updatedLine ($suffix)"
+    }
+
+    fun formatAgeLabel(
+        lastSuccessMs: Long,
+        nowMs: Long = System.currentTimeMillis(),
+        roundToNearestMinute: Boolean = false
+    ): String? {
+        if (lastSuccessMs <= 0) {
+            return null
+        }
+        val ageMs = (nowMs - lastSuccessMs).coerceAtLeast(0L)
+        val minutes = if (roundToNearestMinute) {
+            ((ageMs + 30_000L) / 60_000L).coerceAtLeast(0L)
+        } else {
+            (ageMs / 60_000L).coerceAtLeast(0L)
+        }
+        if (minutes == 0L) {
+            return null
+        }
+        return if (minutes == 1L) "1 min old" else "$minutes mins old"
     }
 }

@@ -1,6 +1,7 @@
 package com.nara.gaiden.wear
 
 import android.content.ComponentName
+import android.content.Context
 import androidx.wear.protolayout.ColorBuilders.argb
 import androidx.wear.protolayout.ActionBuilders.launchAction
 import androidx.wear.protolayout.DimensionBuilders.dp
@@ -9,6 +10,9 @@ import androidx.wear.protolayout.DimensionBuilders.wrap
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.TimelineBuilders.Timeline
+import androidx.wear.protolayout.layout.androidImageResource
+import androidx.wear.protolayout.layout.basicImage
+import androidx.wear.protolayout.layout.imageResource
 import androidx.wear.protolayout.material3.MaterialScope
 import androidx.wear.protolayout.material3.Typography
 import androidx.wear.protolayout.material3.text
@@ -20,48 +24,61 @@ import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import com.nara.gaiden.NaraGaidenFormat
 import com.nara.gaiden.NaraGaidenRow
+import com.nara.gaiden.NaraGaidenStore
 
 class NaraWearTileService : Material3TileService() {
     override suspend fun MaterialScope.tileResponse(
         requestParams: RequestBuilders.TileRequest
     ): TileBuilders.Tile {
         val lastClickableId = requestParams.currentState.lastClickableId
-        if (lastClickableId.isEmpty() || lastClickableId == REFRESH_CLICK_ID) {
+        val didTapRefresh = lastClickableId == REFRESH_CLICK_ID || lastClickableId == BOTTOM_REFRESH_CLICK_ID
+        if (didTapRefresh) {
             NaraWearSyncRequester.requestSnapshot(applicationContext)
         }
         val summary = NaraWearSnapshotPresenter.load(applicationContext)
+        val isRefreshing = isTileRefreshInFlight(applicationContext) || didTapRefresh
+        if (lastClickableId.isEmpty()) {
+            NaraWearSyncRequester.requestSnapshot(applicationContext)
+        }
         return TileBuilders.Tile.Builder()
             .setFreshnessIntervalMillis(FRESHNESS_INTERVAL_MS)
             .setTileTimeline(
                 Timeline.fromLayoutElement(
-                    buildTileLayout(summary, summary.rows)
+                    buildTileLayout(summary, summary.rows, isRefreshing)
                 )
             )
             .build()
     }
 
+    private fun isTileRefreshInFlight(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getLong(NaraGaidenStore.KEY_WEAR_REFRESHING_UNTIL_MS, 0L) > System.currentTimeMillis()
+    }
+
     private fun MaterialScope.buildTileLayout(
         summary: NaraWearSnapshotSummary,
-        rows: List<NaraGaidenRow>
+        rows: List<NaraGaidenRow>,
+        isRefreshing: Boolean
     ): LayoutElementBuilders.LayoutElement {
         val column = LayoutElementBuilders.Column.Builder()
             .setWidth(expand())
             .setHeight(expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
 
-        column.addContent(buildTopStatus(summary.tileFooter))
+        column.addContent(buildTopStatus(summary.updatedLine, summary.ageLine))
 
         if (rows.isEmpty()) {
             column.addContent(buildVerticalSpacer(4f))
             column.addContent(
                 text(summary.tileBody.layoutString, maxLines = 3)
             )
+            column.addContent(buildBottomRefreshArea(isRefreshing))
         } else {
             column.addContent(buildFillSpacer())
             column.addContent(buildVerticalSpacer(2f))
             column.addContent(buildTable(rows))
             column.addContent(buildHeaderRow())
-            column.addContent(buildFillSpacer())
+            column.addContent(buildBottomRefreshArea(isRefreshing))
         }
 
         return LayoutElementBuilders.Box.Builder()
@@ -74,7 +91,7 @@ class NaraWearTileService : Material3TileService() {
                             .setStart(dp(0f))
                             .setEnd(dp(0f))
                             .setTop(dp(2f))
-                            .setBottom(dp(4f))
+                            .setBottom(dp(7f))
                             .build()
                     )
                     .build()
@@ -83,8 +100,8 @@ class NaraWearTileService : Material3TileService() {
             .build()
     }
 
-    private fun MaterialScope.buildTopStatus(status: String): LayoutElementBuilders.LayoutElement {
-        return LayoutElementBuilders.Box.Builder()
+    private fun MaterialScope.buildTopStatus(updatedLine: String, ageLine: String?): LayoutElementBuilders.LayoutElement {
+        val column = LayoutElementBuilders.Column.Builder()
             .setWidth(expand())
             .setHeight(wrap())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
@@ -93,12 +110,94 @@ class NaraWearTileService : Material3TileService() {
                     .setClickable(clickable(id = REFRESH_CLICK_ID, action = loadAction()))
                     .build()
             )
+        column.addContent(
+            text(
+                updatedLine.layoutString,
+                maxLines = 1,
+                typography = Typography.BODY_SMALL,
+                color = colorScheme.onSurfaceVariant
+            )
+        )
+        if (ageLine != null) {
+            column.addContent(
+                text(
+                    ageLine.layoutString,
+                    maxLines = 1,
+                    typography = Typography.BODY_SMALL,
+                    color = colorScheme.onSurfaceVariant
+                )
+            )
+        } else {
+            column.addContent(
+                text(
+                    " ".layoutString,
+                    maxLines = 1,
+                    typography = Typography.BODY_SMALL,
+                    color = colorScheme.onSurfaceVariant
+                )
+            )
+        }
+        return column.build()
+    }
+
+    private fun MaterialScope.buildBottomStatus(status: String): LayoutElementBuilders.LayoutElement {
+        return LayoutElementBuilders.Box.Builder()
+            .setWidth(expand())
+            .setHeight(wrap())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
             .addContent(
                 text(
                     status.layoutString,
                     maxLines = 1,
                     typography = Typography.BODY_SMALL,
                     color = colorScheme.onSurfaceVariant
+                )
+            )
+            .build()
+    }
+
+    private fun MaterialScope.buildBottomRefreshArea(isRefreshing: Boolean): LayoutElementBuilders.LayoutElement {
+        val column = LayoutElementBuilders.Column.Builder()
+            .setWidth(expand())
+            .setHeight(wrap())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+
+        if (isRefreshing) {
+            column.addContent(buildBottomStatus("Refreshing..."))
+        } else {
+            column.addContent(buildVerticalSpacer(12f))
+        }
+        column.addContent(
+            buildBottomIcon()
+        )
+        column.addContent(
+            buildVerticalSpacer(10f)
+        )
+
+        return LayoutElementBuilders.Box.Builder()
+            .setWidth(expand())
+            .setHeight(expand())
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setClickable(clickable(id = BOTTOM_REFRESH_CLICK_ID, action = loadAction()))
+                    .build()
+            )
+            .addContent(column.build())
+            .build()
+    }
+
+    private fun MaterialScope.buildBottomIcon(): LayoutElementBuilders.LayoutElement {
+        return LayoutElementBuilders.Box.Builder()
+            .setWidth(expand())
+            .setHeight(wrap())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(
+                protoLayoutScope.basicImage(
+                    resource = imageResource(androidImage = androidImageResource(R.drawable.ic_sync)),
+                    width = dp(18f),
+                    height = dp(18f)
                 )
             )
             .build()
@@ -340,5 +439,6 @@ class NaraWearTileService : Material3TileService() {
     companion object {
         private const val FRESHNESS_INTERVAL_MS = 5 * 60 * 1000L
         private const val REFRESH_CLICK_ID = "refresh"
+        private const val BOTTOM_REFRESH_CLICK_ID = "bottom_refresh"
     }
 }

@@ -42,6 +42,7 @@ class NaraWearComplicationService : SuspendingComplicationDataSourceService() {
             rows = emptyList(),
             alerts = listOf("⚠️ Sample alert"),
             updatedLine = "as of 9:41 AM",
+            ageLine = "5 mins old",
             hasError = false,
             tileTitle = "1 alert",
             tileBody = "⚠️ Sample alert",

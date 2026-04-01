@@ -1,6 +1,7 @@
 package com.nara.gaiden.wear
 
 import android.content.Context
+import androidx.core.content.edit
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.Wearable
 import com.nara.gaiden.NaraGaidenStore
@@ -13,6 +14,12 @@ object NaraWearSyncRequester {
         val renderOnlyUntilMs = prefs.getLong(NaraGaidenStore.KEY_WEAR_RENDER_ONLY_UNTIL_MS, 0L)
         if (renderOnlyUntilMs > System.currentTimeMillis()) {
             return
+        }
+        prefs.edit {
+            putLong(
+                NaraGaidenStore.KEY_WEAR_REFRESHING_UNTIL_MS,
+                System.currentTimeMillis() + REFRESHING_WINDOW_MS
+            )
         }
         Thread {
             try {
@@ -44,6 +51,7 @@ object NaraWearSyncRequester {
         }.start()
     }
 
+    private const val REFRESHING_WINDOW_MS = 15_000L
     private const val NODE_TIMEOUT_SECONDS = 10L
     private const val MESSAGE_TIMEOUT_SECONDS = 10L
 }
