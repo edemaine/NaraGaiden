@@ -11,7 +11,7 @@ Nara Gaiden takes the (rather hacky) approach
 of grabbing the database from an Android emulator
 running the Nara Baby app.
 It offers the data via a web server,
-which a web, Android, or iOS app can connect to.
+which a web, Android, Wear OS, or iOS app can connect to.
 
 Note that there is no authentication. This is safe within a LAN,
 but you might not want to broadcast your babies' data to the Internet.
@@ -72,20 +72,21 @@ to get a window with no location bar or other chrome.
 8. For mobile apps, configure clients to point at your server:
    - iOS: edit `ios/Shared/NaraAPI.swift` (`NaraConfig.serverURLString`).
    - Android: edit `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt`.
-9. Build/install the Android and/or iOS apps as desired:
+9. Build/install the Android, Wear OS, and/or iOS apps as desired:
    - iOS setup details: `ios/README.md`
-   - Android setup details: `android/README.md`
+   - Android + Wear OS setup details: `android/README.md`
 
 ## Technical Overview
 
 1. Nara Baby runs inside an Android emulator on the server.
 2. `nara_live_export.py` uses ADB to pull data from the emulator and produce JSON.
 3. `nara_web.py` serves the JSON and a simple web UI.
-4. Android and iOS apps/widgets poll the `/json` endpoint and render the overview.
+4. Android phone app/widget polls the `/json` endpoint and syncs snapshots to the Wear OS app/tile.
+5. iOS app/widget polls the `/json` endpoint and renders the overview.
 
 ## Components
 
 - `nara_live_export.py`: pulls data from the Android emulator via ADB.
 - `nara_web.py`: serves `/json` plus a web view optimized for multi-baby overview.
-- `android/`: Android app + widget.
+- `android/`: Android phone app + widget, plus Wear OS app/tile/complication.
 - `ios/`: iOS app + widget.
