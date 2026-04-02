@@ -776,6 +776,8 @@ def is_night_hour(hour, night_start_hour):
 def milk_totals_by_day(events, child_map):
     by_child_day = {}
     by_child_day_hour = {}
+    max_feed_by_child_day = {}
+    max_feed_by_child_day_hour = {}
     breast_by_child_day = {}
     breast_by_child_day_hour = {}
     formula_by_child_day = {}
@@ -831,6 +833,15 @@ def milk_totals_by_day(events, child_map):
         child_day_hours = by_child_day_hour.setdefault(child_key, {})
         day_hours = child_day_hours.setdefault(day_key, {})
         day_hours[hour] = day_hours.get(hour, 0.0) + volume_ml
+        child_day_max_feeds = max_feed_by_child_day.setdefault(child_key, {})
+        current_day_max = child_day_max_feeds.get(day_key)
+        if current_day_max is None or volume_ml > current_day_max:
+            child_day_max_feeds[day_key] = volume_ml
+        child_day_hour_max_feeds = max_feed_by_child_day_hour.setdefault(child_key, {})
+        day_hour_max_feeds = child_day_hour_max_feeds.setdefault(day_key, {})
+        current_hour_max = day_hour_max_feeds.get(hour)
+        if current_hour_max is None or volume_ml > current_hour_max:
+            day_hour_max_feeds[hour] = volume_ml
 
         breast_volume, formula_volume, component_unit = bottle_milk_components(payload)
         if breast_volume is not None or formula_volume is not None:
@@ -1070,6 +1081,8 @@ def milk_totals_by_day(events, child_map):
         formula_day_hour_totals = formula_by_child_day_hour.get(child_key, {})
         day_feed_counts = feed_counts_by_child_day.get(child_key, {})
         day_hour_feed_counts = feed_counts_by_child_day_hour.get(child_key, {})
+        day_max_feeds = max_feed_by_child_day.get(child_key, {})
+        day_hour_max_feeds = max_feed_by_child_day_hour.get(child_key, {})
         diaper_day_counts = diaper_counts_by_child_day.get(child_key, {})
         diaper_day_hour_counts = diaper_counts_by_child_day_hour.get(child_key, {})
         child_gap_stats = gap_stats_by_child_day.get(child_key, {})
@@ -1079,6 +1092,7 @@ def milk_totals_by_day(events, child_map):
         daily_points = []
         cumulative_points = []
         avg_milk_per_feed_points = []
+        max_milk_per_feed_points = []
         breast_milk_percent_points = []
         diaper_points = []
         max_gap_points = []
@@ -1096,6 +1110,7 @@ def milk_totals_by_day(events, child_map):
             avg_milk_per_feed_points.append(
                 daily_value / daily_feed_count if daily_feed_count > 0 else None
             )
+            max_milk_per_feed_points.append(day_max_feeds.get(day_key))
             breast_milk_percent_points.append((breast_value * 100.0 / mix_total) if mix_total > 0 else None)
             diaper_points.append(diaper_day_counts.get(day_key, 0))
 
@@ -1120,6 +1135,7 @@ def milk_totals_by_day(events, child_map):
         max_gap_period_display = _mask_series_with_numeric(max_gap_periods, max_gap_display)
         avg_gap_display = _trim_optional_series(avg_gap_points, decimals=2)
         avg_milk_per_feed_display = _trim_optional_series(avg_milk_per_feed_points, decimals=1)
+        max_milk_per_feed_display = _trim_optional_series(max_milk_per_feed_points, decimals=1)
         breast_milk_percent_display = _trim_optional_series(breast_milk_percent_points, decimals=1)
         diaper_display = _trim_count_series(diaper_points)
         if max_gap_display is None:
@@ -1130,6 +1146,8 @@ def milk_totals_by_day(events, child_map):
             avg_gap_display = [None] * len(labels)
         if avg_milk_per_feed_display is None:
             avg_milk_per_feed_display = [None] * len(labels)
+        if max_milk_per_feed_display is None:
+            max_milk_per_feed_display = [None] * len(labels)
         if breast_milk_percent_display is None:
             breast_milk_percent_display = [None] * len(labels)
         if diaper_display is None:
@@ -1145,6 +1163,8 @@ def milk_totals_by_day(events, child_map):
             night_running_total = 0.0
             day_avg_milk_per_feed_points = []
             night_avg_milk_per_feed_points = []
+            day_max_milk_per_feed_points = []
+            night_max_milk_per_feed_points = []
             day_breast_milk_percent_points = []
             night_breast_milk_percent_points = []
             day_diaper_points = []
@@ -1166,10 +1186,13 @@ def milk_totals_by_day(events, child_map):
                         day_value += amount
 
                 hour_feed_counts = day_hour_feed_counts.get(day_key, {})
+                hour_max_feeds = day_hour_max_feeds.get(day_key, {})
                 breast_hour_totals = breast_day_hour_totals.get(day_key, {})
                 formula_hour_totals = formula_day_hour_totals.get(day_key, {})
                 day_feed_count = 0
                 night_feed_count = 0
+                day_max_feed = None
+                night_max_feed = None
                 day_breast_value = 0.0
                 night_breast_value = 0.0
                 day_formula_value = 0.0
@@ -1179,6 +1202,14 @@ def milk_totals_by_day(events, child_map):
                         night_feed_count += count
                     else:
                         day_feed_count += count
+
+                for hour, max_feed in hour_max_feeds.items():
+                    if is_night_hour(hour, night_start_hour):
+                        if night_max_feed is None or max_feed > night_max_feed:
+                            night_max_feed = max_feed
+                    else:
+                        if day_max_feed is None or max_feed > day_max_feed:
+                            day_max_feed = max_feed
 
                 for hour, amount in breast_hour_totals.items():
                     if is_night_hour(hour, night_start_hour):
@@ -1198,6 +1229,7 @@ def milk_totals_by_day(events, child_map):
                 day_avg_milk_per_feed_points.append(
                     day_value / day_feed_count if day_feed_count > 0 else None
                 )
+                day_max_milk_per_feed_points.append(day_max_feed)
                 day_mix_total = day_breast_value + day_formula_value
                 day_breast_milk_percent_points.append(
                     (day_breast_value * 100.0 / day_mix_total) if day_mix_total > 0 else None
@@ -1208,6 +1240,7 @@ def milk_totals_by_day(events, child_map):
                 night_avg_milk_per_feed_points.append(
                     night_value / night_feed_count if night_feed_count > 0 else None
                 )
+                night_max_milk_per_feed_points.append(night_max_feed)
                 night_mix_total = night_breast_value + night_formula_value
                 night_breast_milk_percent_points.append(
                     (night_breast_value * 100.0 / night_mix_total) if night_mix_total > 0 else None
@@ -1283,8 +1316,14 @@ def milk_totals_by_day(events, child_map):
             day_avg_milk_per_feed_display = _trim_optional_series(
                 day_avg_milk_per_feed_points, decimals=1
             )
+            day_max_milk_per_feed_display = _trim_optional_series(
+                day_max_milk_per_feed_points, decimals=1
+            )
             night_avg_milk_per_feed_display = _trim_optional_series(
                 night_avg_milk_per_feed_points, decimals=1
+            )
+            night_max_milk_per_feed_display = _trim_optional_series(
+                night_max_milk_per_feed_points, decimals=1
             )
             day_breast_milk_percent_display = _trim_optional_series(
                 day_breast_milk_percent_points, decimals=1
@@ -1306,6 +1345,8 @@ def milk_totals_by_day(events, child_map):
                 day_gap_avg_display = [None] * len(labels)
             if day_avg_milk_per_feed_display is None:
                 day_avg_milk_per_feed_display = [None] * len(labels)
+            if day_max_milk_per_feed_display is None:
+                day_max_milk_per_feed_display = [None] * len(labels)
             if day_breast_milk_percent_display is None:
                 day_breast_milk_percent_display = [None] * len(labels)
             if night_gap_max_display is None:
@@ -1316,6 +1357,8 @@ def milk_totals_by_day(events, child_map):
                 night_gap_avg_display = [None] * len(labels)
             if night_avg_milk_per_feed_display is None:
                 night_avg_milk_per_feed_display = [None] * len(labels)
+            if night_max_milk_per_feed_display is None:
+                night_max_milk_per_feed_display = [None] * len(labels)
             if night_breast_milk_percent_display is None:
                 night_breast_milk_percent_display = [None] * len(labels)
             if day_diaper_display is None:
@@ -1328,6 +1371,7 @@ def milk_totals_by_day(events, child_map):
                     "daily": day_daily_display,
                     "cumulative": day_cumulative_display,
                     "avgMilkPerFeed": day_avg_milk_per_feed_display,
+                    "maxMilkPerFeed": day_max_milk_per_feed_display,
                     "breastMilkPercent": day_breast_milk_percent_display,
                     "diaper": day_diaper_display,
                     "maxGap": day_gap_max_display,
@@ -1338,6 +1382,7 @@ def milk_totals_by_day(events, child_map):
                     "daily": night_daily_display,
                     "cumulative": night_cumulative_display,
                     "avgMilkPerFeed": night_avg_milk_per_feed_display,
+                    "maxMilkPerFeed": night_max_milk_per_feed_display,
                     "breastMilkPercent": night_breast_milk_percent_display,
                     "diaper": night_diaper_display,
                     "maxGap": night_gap_max_display,
@@ -1352,6 +1397,7 @@ def milk_totals_by_day(events, child_map):
                 "daily": daily_display,
                 "cumulative": cumulative_display,
                 "avgMilkPerFeed": avg_milk_per_feed_display,
+                "maxMilkPerFeed": max_milk_per_feed_display,
                 "breastMilkPercent": breast_milk_percent_display,
                 "diaper": diaper_display,
                 "maxGap": max_gap_display,
@@ -1426,6 +1472,7 @@ def build_plot_html(events, child_map, generated_at):
       background: #1a1a1a;
       color: #f2f2f2;
       padding: 8px 12px;
+      font-family: var(--font-body);
       border-radius: 6px;
       cursor: pointer;
       text-decoration: none;
@@ -1437,6 +1484,7 @@ def build_plot_html(events, child_map, generated_at):
       background: #1a1a1a;
       color: #f2f2f2;
       padding: 8px 12px;
+      font-family: var(--font-body);
       border-radius: 6px;
       font-size: clamp(12px, 1vw + 6px, 16px);
     }
@@ -1522,7 +1570,7 @@ def build_plot_html(events, child_map, generated_at):
     }}
 
     function isMilkMode(plotMode) {{
-      return plotMode === "milk-daily" || plotMode === "milk-cumulative" || plotMode === "milk-average-feed";
+      return plotMode === "milk-daily" || plotMode === "milk-cumulative" || plotMode === "milk-average-feed" || plotMode === "milk-max-feed";
     }}
 
     function isPercentMode(plotMode) {{
@@ -1543,6 +1591,9 @@ def build_plot_html(events, child_map, generated_at):
       }}
       if (plotMode === "milk-average-feed") {{
         return "avg milk per feed";
+      }}
+      if (plotMode === "milk-max-feed") {{
+        return "max milk per feed";
       }}
       if (plotMode === "milk-breast-percent") {{
         return "breast milk share";
@@ -1583,6 +1634,54 @@ def build_plot_html(events, child_map, generated_at):
         return smoothWindow > 1 ? 1 : 0;
       }}
       return 2;
+    }}
+
+    function isRecordHighlightMode(plotMode) {{
+      return plotMode === "milk-max-feed" || plotMode === "gap-max";
+    }}
+
+    function buildRecordPointStyle(plotMode, values, accentColor) {{
+      if (!isRecordHighlightMode(plotMode)) {{
+        return {{
+          pointRadius: 1,
+          pointHoverRadius: 4,
+          pointBorderWidth: 0,
+          pointBackgroundColor: accentColor,
+          pointBorderColor: accentColor,
+        }};
+      }}
+
+      const pointRadius = [];
+      const pointHoverRadius = [];
+      const pointBorderWidth = [];
+      const pointBackgroundColor = [];
+      const pointBorderColor = [];
+      let currentRecord = null;
+
+      // Scan left-to-right once so record detection stays O(n) per curve.
+      for (let idx = 0; idx < values.length; idx += 1) {{
+        const value = values[idx];
+        const hasValue = value != null && !Number.isNaN(value);
+        const isRecord = hasValue && (currentRecord == null || value > currentRecord);
+
+        if (isRecord) {{
+          currentRecord = value;
+        }}
+
+        pointRadius.push(hasValue ? (isRecord ? 4 : 1) : 0);
+        pointHoverRadius.push(hasValue ? (isRecord ? 6 : 4) : 0);
+        pointBorderWidth.push(isRecord ? 2 : 0);
+        pointBackgroundColor.push(isRecord ? "#111" : accentColor);
+        pointBorderColor.push(accentColor);
+      }}
+
+      return {{
+        pointRadius,
+        pointHoverRadius,
+        pointBorderWidth,
+        pointBackgroundColor,
+        pointBorderColor,
+      }};
     }}
 
     function movingAverage(values, windowSize, partialDayIndex) {{
@@ -1627,6 +1726,9 @@ def build_plot_html(events, child_map, generated_at):
       if (plotMode === "milk-average-feed") {{
         return split[period].avgMilkPerFeed || [];
       }}
+      if (plotMode === "milk-max-feed") {{
+        return split[period].maxMilkPerFeed || [];
+      }}
       if (plotMode === "milk-breast-percent") {{
         return split[period].breastMilkPercent || [];
       }}
@@ -1657,6 +1759,9 @@ def build_plot_html(events, child_map, generated_at):
       }}
       if (plotMode === "milk-average-feed") {{
         return entry.avgMilkPerFeed || [];
+      }}
+      if (plotMode === "milk-max-feed") {{
+        return entry.maxMilkPerFeed || [];
       }}
       if (plotMode === "milk-breast-percent") {{
         return entry.breastMilkPercent || [];
@@ -1738,14 +1843,18 @@ def build_plot_html(events, child_map, generated_at):
             return;
           }}
           const customKey = `single:${{plotMode}}:${{entry.label}}`;
+          const pointStyle = buildRecordPointStyle(plotMode, data, entry.borderColor);
           datasets.push({{
             label: entry.label,
             customKey,
             data,
             borderColor: entry.borderColor,
             backgroundColor: entry.backgroundColor,
-            pointRadius: 1,
-            pointHoverRadius: 4,
+            pointRadius: pointStyle.pointRadius,
+            pointHoverRadius: pointStyle.pointHoverRadius,
+            pointBorderWidth: pointStyle.pointBorderWidth,
+            pointBackgroundColor: pointStyle.pointBackgroundColor,
+            pointBorderColor: pointStyle.pointBorderColor,
             borderWidth: 2,
             tension: 0.2,
             spanGaps: false,
@@ -1768,6 +1877,7 @@ def build_plot_html(events, child_map, generated_at):
             return;
           }}
           const customKey = `split:${{plotMode}}:${{entry.label}}:${{spec.period}}`;
+          const pointStyle = buildRecordPointStyle(plotMode, data, entry.borderColor);
           datasets.push({{
             label: `${{entry.label}} (${{spec.label}})`,
             customKey,
@@ -1775,8 +1885,11 @@ def build_plot_html(events, child_map, generated_at):
             borderColor: entry.borderColor,
             backgroundColor: entry.backgroundColor,
             borderDash: spec.dash,
-            pointRadius: 1,
-            pointHoverRadius: 4,
+            pointRadius: pointStyle.pointRadius,
+            pointHoverRadius: pointStyle.pointHoverRadius,
+            pointBorderWidth: pointStyle.pointBorderWidth,
+            pointBackgroundColor: pointStyle.pointBackgroundColor,
+            pointBorderColor: pointStyle.pointBorderColor,
             borderWidth: 2,
             tension: 0.2,
             spanGaps: false,
@@ -1797,14 +1910,18 @@ def build_plot_html(events, child_map, generated_at):
         const data = isSmoothable(plotMode) ? movingAverage(raw, smoothWindow, todayIndex) : raw;
         if (hasAnyValue(data)) {{
           const customKey = `combined:${{plotMode}}:all-babies`;
+          const pointStyle = buildRecordPointStyle(plotMode, data, "#ffffff");
           datasets.push({{
             label: allBabiesGap.label || "All Babies",
             customKey,
             data,
             borderColor: "#ffffff",
             backgroundColor: "#ffffff",
-            pointRadius: 1,
-            pointHoverRadius: 4,
+            pointRadius: pointStyle.pointRadius,
+            pointHoverRadius: pointStyle.pointHoverRadius,
+            pointBorderWidth: pointStyle.pointBorderWidth,
+            pointBackgroundColor: pointStyle.pointBackgroundColor,
+            pointBorderColor: pointStyle.pointBorderColor,
             borderWidth: 3,
             tension: 0.2,
             spanGaps: false,
@@ -1829,6 +1946,7 @@ def build_plot_html(events, child_map, generated_at):
         }}
         const customKey = `combined:${{plotMode}}:all-babies:${{spec.period}}`;
         const labelBase = allBabiesGap.label || "All Babies";
+        const pointStyle = buildRecordPointStyle(plotMode, data, "#ffffff");
         datasets.push({{
           label: `${{labelBase}} (${{spec.label}})`,
           customKey,
@@ -1836,8 +1954,11 @@ def build_plot_html(events, child_map, generated_at):
           borderColor: "#ffffff",
           backgroundColor: "#ffffff",
           borderDash: spec.dash,
-          pointRadius: 1,
-          pointHoverRadius: 4,
+          pointRadius: pointStyle.pointRadius,
+          pointHoverRadius: pointStyle.pointHoverRadius,
+          pointBorderWidth: pointStyle.pointBorderWidth,
+          pointBackgroundColor: pointStyle.pointBackgroundColor,
+          pointBorderColor: pointStyle.pointBorderColor,
           borderWidth: 3,
           tension: 0.2,
           spanGaps: false,
@@ -1856,6 +1977,10 @@ def build_plot_html(events, child_map, generated_at):
         baseTitle = smoothWindow <= 1
           ? "Average milk per feed (mL)"
           : `Average milk per feed (mL, ${{smoothWindow}}-day moving avg)`;
+      }} else if (plotMode === "milk-max-feed") {{
+        baseTitle = smoothWindow <= 1
+          ? "Max milk per feed (mL)"
+          : `Max milk per feed (mL, ${{smoothWindow}}-day moving avg)`;
       }} else if (plotMode === "milk-breast-percent") {{
         baseTitle = smoothWindow <= 1
           ? "Breast milk share of bottle intake (%)"
@@ -2241,6 +2366,7 @@ def build_plot_html(events, child_map, generated_at):
         <option value=\"milk-daily\" selected>Daily Milk Total</option>
         <option value=\"milk-cumulative\">Cumulative Milk Total</option>
         <option value=\"milk-average-feed\">Average Milk Per Feed</option>
+        <option value=\"milk-max-feed\">Max Milk Per Feed</option>
         <option value=\"milk-breast-percent\">Breast Milk vs Formula %</option>
         <option value=\"diaper-daily\">Daily Diaper Changes</option>
         <option value=\"gap-max\">Max Feeding Gap</option>
