@@ -16,7 +16,6 @@ object NaraGaidenWearBridge {
 
     fun refreshAndSync(context: Context, nodeId: String? = null) {
         Thread {
-            sendSnapshot(context, nodeId)
             refreshCache(context)
             sendSnapshot(context, nodeId)
         }.start()
