@@ -9,11 +9,11 @@ import com.nara.gaiden.NaraGaidenWearSync
 import java.util.concurrent.TimeUnit
 
 object NaraWearSyncRequester {
-    fun requestSnapshot(context: Context) {
+    fun requestSnapshot(context: Context): Boolean {
         val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         val renderOnlyUntilMs = prefs.getLong(NaraGaidenStore.KEY_WEAR_RENDER_ONLY_UNTIL_MS, 0L)
         if (renderOnlyUntilMs > System.currentTimeMillis()) {
-            return
+            return false
         }
         prefs.edit {
             putLong(
@@ -49,6 +49,7 @@ object NaraWearSyncRequester {
             } catch (_: Exception) {
             }
         }.start()
+        return true
     }
 
     private const val REFRESHING_WINDOW_MS = 15_000L

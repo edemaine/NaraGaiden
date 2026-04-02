@@ -32,14 +32,14 @@ class NaraWearTileService : Material3TileService() {
     ): TileBuilders.Tile {
         val lastClickableId = requestParams.currentState.lastClickableId
         val didTapRefresh = lastClickableId == REFRESH_CLICK_ID || lastClickableId == BOTTOM_REFRESH_CLICK_ID
-        if (didTapRefresh) {
-            NaraWearSyncRequester.requestSnapshot(applicationContext)
-        }
+        val shouldAutoRefresh = lastClickableId.isEmpty()
         val summary = NaraWearSnapshotPresenter.load(applicationContext)
-        val isRefreshing = isTileRefreshInFlight(applicationContext) || didTapRefresh
-        if (lastClickableId.isEmpty()) {
-            NaraWearSyncRequester.requestSnapshot(applicationContext)
+        val didStartRefresh = when {
+            didTapRefresh -> NaraWearSyncRequester.requestSnapshot(applicationContext)
+            shouldAutoRefresh -> NaraWearSyncRequester.requestSnapshot(applicationContext)
+            else -> false
         }
+        val isRefreshing = isTileRefreshInFlight(applicationContext) || didStartRefresh
         return TileBuilders.Tile.Builder()
             .setFreshnessIntervalMillis(FRESHNESS_INTERVAL_MS)
             .setTileTimeline(
