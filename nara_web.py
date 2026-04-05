@@ -166,7 +166,7 @@ def feed_label(ev):
     if t == "FEED.BOTTLE":
         vol, unit = bottle_volume(payload)
         if vol is not None and unit:
-            return f"Bottle ({format_amount(vol)} {unit})"
+            return f"Bottle ({format_amount(vol)} {display_volume_unit(unit)})"
         return "Bottle"
     if t == "FEED.BREAST":
         left = payload.get("breastLeftDuration")
@@ -205,6 +205,17 @@ def to_number(value):
         return float(value)
     except ValueError:
         return None
+
+
+def display_volume_unit(unit):
+    normalized = str(unit or "mL").strip().lower()
+    if normalized in {"ml", "milliliter", "milliliters"}:
+        return "mL"
+    if normalized in {"l", "liter", "liters"}:
+        return "L"
+    if normalized in {"oz", "fl oz", "floz", "fl_oz"}:
+        return "oz"
+    return str(unit or "").strip()
 
 
 def bottle_volume(payload):
@@ -667,12 +678,12 @@ def build_json(
 def normalize_milk_to_ml(volume, unit):
     if volume is None:
         return None
-    normalized = str(unit or "ML").strip().upper()
-    if normalized in {"ML", "MILLILITER", "MILLILITERS"}:
+    normalized = str(unit or "mL").strip().lower()
+    if normalized in {"ml", "milliliter", "milliliters"}:
         return float(volume)
-    if normalized in {"L", "LITER", "LITERS"}:
+    if normalized in {"l", "liter", "liters"}:
         return float(volume) * 1000.0
-    if normalized in {"OZ", "FL OZ", "FLOZ", "FL_OZ"}:
+    if normalized in {"oz", "fl oz", "floz", "fl_oz"}:
         return float(volume) * 29.5735
     return None
 

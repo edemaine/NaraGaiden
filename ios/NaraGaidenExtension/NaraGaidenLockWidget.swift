@@ -238,11 +238,7 @@ struct NaraGaidenLockWidgetEntryView: View {
     }
 
     private func normalizedVolumeUnits(_ label: String) -> String {
-        label
-            .replacingOccurrences(of: " ML", with: "mL")
-            .replacingOccurrences(of: " ml", with: "mL")
-            .replacingOccurrences(of: " Ml", with: "mL")
-            .replacingOccurrences(of: " mL", with: "mL")
+        label.replacingOccurrences(of: "(?i)\\bml\\b", with: "mL", options: .regularExpression)
     }
 
     private func shortRelativeString(beginDt: Int64?) -> String {

@@ -56,7 +56,7 @@ struct NaraPayload: Codable {
                     id: "child-1",
                     name: "Ava",
                     feed: NaraEvent(
-                        label: "Bottle (120 ml)",
+                        label: "Bottle (120 mL)",
                         beginDt: nowMs - 20 * 60 * 1000
                     ),
                     diaper: NaraEvent(
