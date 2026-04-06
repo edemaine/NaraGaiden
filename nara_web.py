@@ -447,6 +447,17 @@ def build_html(
       font-size: clamp(12px, 1vw + 6px, 16px);
       white-space: nowrap;
     }
+    @keyframes stale-age-pulse {
+      0%, 100% { color: #ffd08a; text-shadow: none; transform: rotate(0deg); }
+      50% { color: #ff9f1c; text-shadow: 0 0 12px rgba(255, 159, 28, 0.45); transform: rotate(-1.5deg); }
+    }
+    .meta-age {
+      color: #ffd08a;
+      display: inline-block;
+      font-size: 1.35em;
+      font-weight: 700;
+      animation: stale-age-pulse 1.8s ease-in-out infinite;
+    }
     .actions {
       display: flex;
       justify-content: space-between;
@@ -528,17 +539,33 @@ def build_html(
       if (!meta.dataset.base) {
         meta.dataset.base = meta.textContent || "";
       }
+      const baseText = meta.dataset.base;
+
+      function renderMeta(suffix = "") {
+        if (!suffix) {
+          meta.textContent = baseText;
+          return;
+        }
+        const age = document.createElement("span");
+        age.className = "meta-age";
+        age.textContent = `(${suffix})`;
+        meta.replaceChildren(
+          document.createTextNode(`${baseText} `),
+          age,
+        );
+      }
+
       if (!staleActive) {
-        meta.textContent = meta.dataset.base;
+        renderMeta();
         return;
       }
       const minutes = Math.max(0, Math.floor((Date.now() - lastSuccessMs) / 60000));
       if (minutes === 0) {
-        meta.textContent = meta.dataset.base;
+        renderMeta();
         return;
       }
       const suffix = minutes === 1 ? "1 min old" : `${minutes} mins old`;
-      meta.textContent = `${meta.dataset.base} (${suffix})`;
+      renderMeta(suffix);
     }
 
     async function refreshContent() {
@@ -588,6 +615,7 @@ def build_html(
       refreshContent();
     }
 
+    updateStaleNote();
     window.addEventListener("pageshow", refreshIfStale);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
@@ -1542,6 +1570,17 @@ def build_plot_html(events, child_map, generated_at):
       color: #9e9e9e;
       margin-top: 10px;
       font-size: clamp(12px, 1vw + 6px, 16px);
+    }
+    @keyframes stale-age-pulse {
+      0%, 100% { color: #ffd08a; text-shadow: none; transform: rotate(0deg); }
+      50% { color: #ff9f1c; text-shadow: 0 0 12px rgba(255, 159, 28, 0.45); transform: rotate(-1.5deg); }
+    }
+    .meta-age {
+      color: #ffd08a;
+      display: inline-block;
+      font-size: 1.35em;
+      font-weight: 700;
+      animation: stale-age-pulse 1.8s ease-in-out infinite;
     }
     .warn {
       color: #ffb74d;
