@@ -38,6 +38,7 @@ body {
 
 POOP_ALERT_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000
 ALERT_ICON_HTML = "&#9888;&#65039;"
+DIAPER_PLOT_MODES = ("all", "dirty", "wet", "dry")
 
 
 def format_relative(ms, now_ms=None):
@@ -284,6 +285,88 @@ def diaper_label(ev):
         parts.append(f"({', '.join(extras)})")
 
     return "/".join(parts) if parts else "Diaper"
+
+
+def _empty_diaper_plot_stat():
+    return {"count": 0, "blowoutCount": 0, "blowoutDetails": []}
+
+
+def _new_diaper_plot_stats():
+    return {mode: _empty_diaper_plot_stat() for mode in DIAPER_PLOT_MODES}
+
+
+def diaper_plot_modes_for_event(ev):
+    payload = ev.get("payload") or {}
+    modes = ["all"]
+    if payload.get("diaperTypePoop"):
+        modes.append("dirty")
+    if payload.get("diaperTypePee"):
+        modes.append("wet")
+    if payload.get("diaperTypeDry"):
+        modes.append("dry")
+    return modes
+
+
+def diaper_blowout_details(ev):
+    payload = ev.get("payload") or {}
+    details = []
+    for value in (ev.get("note"), payload.get("note"), payload.get("diaperDetail")):
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text and text not in details:
+            details.append(text)
+    return details
+
+
+def diaper_has_blowout(ev):
+    payload = ev.get("payload") or {}
+    if payload.get("diaperPoopBlowout"):
+        return True
+    return any("blowout" in detail.lower() for detail in diaper_blowout_details(ev))
+
+
+def accumulate_diaper_plot_stats(mode_stats, ev):
+    blowout = diaper_has_blowout(ev)
+    blowout_details = diaper_blowout_details(ev) if blowout else []
+    for mode in diaper_plot_modes_for_event(ev):
+        stat = mode_stats.setdefault(mode, _empty_diaper_plot_stat())
+        stat["count"] = int(stat.get("count", 0)) + 1
+        if not blowout:
+            continue
+        stat["blowoutCount"] = int(stat.get("blowoutCount", 0)) + 1
+        existing_details = stat.setdefault("blowoutDetails", [])
+        for detail in blowout_details:
+            if detail not in existing_details:
+                existing_details.append(detail)
+
+
+def combine_diaper_plot_stats(stats_list):
+    combined = {mode: _empty_diaper_plot_stat() for mode in DIAPER_PLOT_MODES}
+    for stats in stats_list:
+        if not stats:
+            continue
+        for mode in DIAPER_PLOT_MODES:
+            source = stats.get(mode)
+            if not source:
+                continue
+            target = combined[mode]
+            target["count"] += int(source.get("count", 0))
+            target["blowoutCount"] += int(source.get("blowoutCount", 0))
+            for detail in source.get("blowoutDetails", []):
+                if detail not in target["blowoutDetails"]:
+                    target["blowoutDetails"].append(detail)
+    return combined
+
+
+def diaper_plot_meta(stat):
+    if not stat:
+        return {"count": 0, "blowoutCount": 0, "blowoutDetails": []}
+    return {
+        "count": int(stat.get("count", 0)),
+        "blowoutCount": int(stat.get("blowoutCount", 0)),
+        "blowoutDetails": list(stat.get("blowoutDetails", [])),
+    }
 
 
 def format_days_count(delta_ms):
@@ -823,8 +906,8 @@ def milk_totals_by_day(events, child_map):
     formula_by_child_day_hour = {}
     feed_counts_by_child_day = {}
     feed_counts_by_child_day_hour = {}
-    diaper_counts_by_child_day = {}
-    diaper_counts_by_child_day_hour = {}
+    diaper_stats_by_child_day = {}
+    diaper_stats_by_child_day_hour = {}
     feed_times_by_child = {}
     feed_times_all = []
     gap_stats_by_child_day = {}
@@ -848,11 +931,13 @@ def milk_totals_by_day(events, child_map):
         hour = begin_local.tm_hour
 
         if track_group == "DIAPER":
-            child_diaper_counts = diaper_counts_by_child_day.setdefault(child_key, {})
-            child_diaper_counts[day_key] = child_diaper_counts.get(day_key, 0) + 1
-            child_diaper_hour_counts = diaper_counts_by_child_day_hour.setdefault(child_key, {})
-            day_hour_counts = child_diaper_hour_counts.setdefault(day_key, {})
-            day_hour_counts[hour] = day_hour_counts.get(hour, 0) + 1
+            child_diaper_stats = diaper_stats_by_child_day.setdefault(child_key, {})
+            day_diaper_stats = child_diaper_stats.setdefault(day_key, _new_diaper_plot_stats())
+            accumulate_diaper_plot_stats(day_diaper_stats, ev)
+            child_diaper_hour_stats = diaper_stats_by_child_day_hour.setdefault(child_key, {})
+            day_hour_stats = child_diaper_hour_stats.setdefault(day_key, {})
+            hour_diaper_stats = day_hour_stats.setdefault(hour, _new_diaper_plot_stats())
+            accumulate_diaper_plot_stats(hour_diaper_stats, ev)
             continue
 
         child_feed_times = feed_times_by_child.setdefault(child_key, [])
@@ -1107,7 +1192,7 @@ def milk_totals_by_day(events, child_map):
     series = []
     series_child_keys = sorted(
         set(by_child_day.keys())
-        | set(diaper_counts_by_child_day.keys())
+        | set(diaper_stats_by_child_day.keys())
         | set(gap_stats_by_child_day.keys()),
         key=lambda key: (child_map.get(key) or key),
     )
@@ -1122,8 +1207,8 @@ def milk_totals_by_day(events, child_map):
         day_hour_feed_counts = feed_counts_by_child_day_hour.get(child_key, {})
         day_max_feeds = max_feed_by_child_day.get(child_key, {})
         day_hour_max_feeds = max_feed_by_child_day_hour.get(child_key, {})
-        diaper_day_counts = diaper_counts_by_child_day.get(child_key, {})
-        diaper_day_hour_counts = diaper_counts_by_child_day_hour.get(child_key, {})
+        diaper_day_stats = diaper_stats_by_child_day.get(child_key, {})
+        diaper_day_hour_stats = diaper_stats_by_child_day_hour.get(child_key, {})
         child_gap_stats = gap_stats_by_child_day.get(child_key, {})
         child_gap_hour_stats = gap_stats_by_child_day_hour.get(child_key, {})
 
@@ -1133,7 +1218,8 @@ def milk_totals_by_day(events, child_map):
         avg_milk_per_feed_points = []
         max_milk_per_feed_points = []
         breast_milk_percent_points = []
-        diaper_points = []
+        diaper_points_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
+        diaper_meta_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
         max_gap_points = []
         max_gap_periods = []
         avg_gap_points = []
@@ -1151,7 +1237,11 @@ def milk_totals_by_day(events, child_map):
             )
             max_milk_per_feed_points.append(day_max_feeds.get(day_key))
             breast_milk_percent_points.append((breast_value * 100.0 / mix_total) if mix_total > 0 else None)
-            diaper_points.append(diaper_day_counts.get(day_key, 0))
+            day_diaper_mode_stats = diaper_day_stats.get(day_key, {})
+            for mode in DIAPER_PLOT_MODES:
+                stat = day_diaper_mode_stats.get(mode)
+                diaper_points_by_mode[mode].append(int(stat.get("count", 0)) if stat else 0)
+                diaper_meta_by_mode[mode].append(diaper_plot_meta(stat))
 
             gap_stat = child_gap_stats.get(day_key)
             if gap_stat and gap_stat.get("count", 0) > 0:
@@ -1176,7 +1266,17 @@ def milk_totals_by_day(events, child_map):
         avg_milk_per_feed_display = _trim_optional_series(avg_milk_per_feed_points, decimals=1)
         max_milk_per_feed_display = _trim_optional_series(max_milk_per_feed_points, decimals=1)
         breast_milk_percent_display = _trim_optional_series(breast_milk_percent_points, decimals=1)
-        diaper_display = _trim_count_series(diaper_points)
+        diaper_display_by_mode = {}
+        diaper_meta_display_by_mode = {}
+        for mode in DIAPER_PLOT_MODES:
+            display = _trim_count_series(diaper_points_by_mode[mode])
+            if display is None:
+                display = [None] * len(labels)
+            diaper_display_by_mode[mode] = display
+            meta_display = _mask_series_with_numeric(diaper_meta_by_mode[mode], display)
+            if meta_display is None:
+                meta_display = [None] * len(labels)
+            diaper_meta_display_by_mode[mode] = meta_display
         if max_gap_display is None:
             max_gap_display = [None] * len(labels)
         if max_gap_period_display is None:
@@ -1189,9 +1289,6 @@ def milk_totals_by_day(events, child_map):
             max_milk_per_feed_display = [None] * len(labels)
         if breast_milk_percent_display is None:
             breast_milk_percent_display = [None] * len(labels)
-        if diaper_display is None:
-            diaper_display = [None] * len(labels)
-
         split = {}
         for night_start_hour in range(24):
             day_daily_points = []
@@ -1206,8 +1303,10 @@ def milk_totals_by_day(events, child_map):
             night_max_milk_per_feed_points = []
             day_breast_milk_percent_points = []
             night_breast_milk_percent_points = []
-            day_diaper_points = []
-            night_diaper_points = []
+            day_diaper_points_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
+            night_diaper_points_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
+            day_diaper_meta_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
+            night_diaper_meta_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
             day_gap_max_points = []
             day_gap_max_periods = []
             day_gap_avg_points = []
@@ -1285,16 +1384,21 @@ def milk_totals_by_day(events, child_map):
                     (night_breast_value * 100.0 / night_mix_total) if night_mix_total > 0 else None
                 )
 
-                diaper_hour_counts = diaper_day_hour_counts.get(day_key, {})
-                day_diaper_value = 0
-                night_diaper_value = 0
-                for hour, count in diaper_hour_counts.items():
+                diaper_hour_mode_stats = diaper_day_hour_stats.get(day_key, {})
+                day_diaper_stats_for_day = []
+                night_diaper_stats_for_day = []
+                for hour, hour_stats in diaper_hour_mode_stats.items():
                     if is_night_hour(hour, night_start_hour):
-                        night_diaper_value += count
+                        night_diaper_stats_for_day.append(hour_stats)
                     else:
-                        day_diaper_value += count
-                day_diaper_points.append(day_diaper_value)
-                night_diaper_points.append(night_diaper_value)
+                        day_diaper_stats_for_day.append(hour_stats)
+                day_diaper_summary = combine_diaper_plot_stats(day_diaper_stats_for_day)
+                night_diaper_summary = combine_diaper_plot_stats(night_diaper_stats_for_day)
+                for mode in DIAPER_PLOT_MODES:
+                    day_diaper_points_by_mode[mode].append(day_diaper_summary[mode]["count"])
+                    night_diaper_points_by_mode[mode].append(night_diaper_summary[mode]["count"])
+                    day_diaper_meta_by_mode[mode].append(diaper_plot_meta(day_diaper_summary[mode]))
+                    night_diaper_meta_by_mode[mode].append(diaper_plot_meta(night_diaper_summary[mode]))
 
                 gap_hour_stats = child_gap_hour_stats.get(day_key, {})
                 day_gap_sum = 0.0
@@ -1374,8 +1478,28 @@ def milk_totals_by_day(events, child_map):
             night_gap_max_period_display = _mask_series_with_numeric(
                 night_gap_max_periods, night_gap_max_display
             )
-            day_diaper_display = _trim_count_series(day_diaper_points)
-            night_diaper_display = _trim_count_series(night_diaper_points)
+            day_diaper_display_by_mode = {}
+            night_diaper_display_by_mode = {}
+            day_diaper_meta_display_by_mode = {}
+            night_diaper_meta_display_by_mode = {}
+            for mode in DIAPER_PLOT_MODES:
+                day_display = _trim_count_series(day_diaper_points_by_mode[mode])
+                if day_display is None:
+                    day_display = [None] * len(labels)
+                day_diaper_display_by_mode[mode] = day_display
+                day_meta_display = _mask_series_with_numeric(day_diaper_meta_by_mode[mode], day_display)
+                if day_meta_display is None:
+                    day_meta_display = [None] * len(labels)
+                day_diaper_meta_display_by_mode[mode] = day_meta_display
+
+                night_display = _trim_count_series(night_diaper_points_by_mode[mode])
+                if night_display is None:
+                    night_display = [None] * len(labels)
+                night_diaper_display_by_mode[mode] = night_display
+                night_meta_display = _mask_series_with_numeric(night_diaper_meta_by_mode[mode], night_display)
+                if night_meta_display is None:
+                    night_meta_display = [None] * len(labels)
+                night_diaper_meta_display_by_mode[mode] = night_meta_display
             if day_gap_max_display is None:
                 day_gap_max_display = [None] * len(labels)
             if day_gap_max_period_display is None:
@@ -1400,11 +1524,6 @@ def milk_totals_by_day(events, child_map):
                 night_max_milk_per_feed_display = [None] * len(labels)
             if night_breast_milk_percent_display is None:
                 night_breast_milk_percent_display = [None] * len(labels)
-            if day_diaper_display is None:
-                day_diaper_display = [None] * len(labels)
-            if night_diaper_display is None:
-                night_diaper_display = [None] * len(labels)
-
             split[str(night_start_hour)] = {
                 "day": {
                     "daily": day_daily_display,
@@ -1412,7 +1531,14 @@ def milk_totals_by_day(events, child_map):
                     "avgMilkPerFeed": day_avg_milk_per_feed_display,
                     "maxMilkPerFeed": day_max_milk_per_feed_display,
                     "breastMilkPercent": day_breast_milk_percent_display,
-                    "diaper": day_diaper_display,
+                    "diaperAll": day_diaper_display_by_mode["all"],
+                    "diaperAllMeta": day_diaper_meta_display_by_mode["all"],
+                    "diaperDirty": day_diaper_display_by_mode["dirty"],
+                    "diaperDirtyMeta": day_diaper_meta_display_by_mode["dirty"],
+                    "diaperWet": day_diaper_display_by_mode["wet"],
+                    "diaperWetMeta": day_diaper_meta_display_by_mode["wet"],
+                    "diaperDry": day_diaper_display_by_mode["dry"],
+                    "diaperDryMeta": day_diaper_meta_display_by_mode["dry"],
                     "maxGap": day_gap_max_display,
                     "maxGapPeriod": day_gap_max_period_display,
                     "avgGap": day_gap_avg_display,
@@ -1423,7 +1549,14 @@ def milk_totals_by_day(events, child_map):
                     "avgMilkPerFeed": night_avg_milk_per_feed_display,
                     "maxMilkPerFeed": night_max_milk_per_feed_display,
                     "breastMilkPercent": night_breast_milk_percent_display,
-                    "diaper": night_diaper_display,
+                    "diaperAll": night_diaper_display_by_mode["all"],
+                    "diaperAllMeta": night_diaper_meta_display_by_mode["all"],
+                    "diaperDirty": night_diaper_display_by_mode["dirty"],
+                    "diaperDirtyMeta": night_diaper_meta_display_by_mode["dirty"],
+                    "diaperWet": night_diaper_display_by_mode["wet"],
+                    "diaperWetMeta": night_diaper_meta_display_by_mode["wet"],
+                    "diaperDry": night_diaper_display_by_mode["dry"],
+                    "diaperDryMeta": night_diaper_meta_display_by_mode["dry"],
                     "maxGap": night_gap_max_display,
                     "maxGapPeriod": night_gap_max_period_display,
                     "avgGap": night_gap_avg_display,
@@ -1438,7 +1571,14 @@ def milk_totals_by_day(events, child_map):
                 "avgMilkPerFeed": avg_milk_per_feed_display,
                 "maxMilkPerFeed": max_milk_per_feed_display,
                 "breastMilkPercent": breast_milk_percent_display,
-                "diaper": diaper_display,
+                "diaperAll": diaper_display_by_mode["all"],
+                "diaperAllMeta": diaper_meta_display_by_mode["all"],
+                "diaperDirty": diaper_display_by_mode["dirty"],
+                "diaperDirtyMeta": diaper_meta_display_by_mode["dirty"],
+                "diaperWet": diaper_display_by_mode["wet"],
+                "diaperWetMeta": diaper_meta_display_by_mode["wet"],
+                "diaperDry": diaper_display_by_mode["dry"],
+                "diaperDryMeta": diaper_meta_display_by_mode["dry"],
                 "maxGap": max_gap_display,
                 "maxGapPeriod": max_gap_period_display,
                 "avgGap": avg_gap_display,
@@ -1627,6 +1767,10 @@ def build_plot_html(events, child_map, generated_at):
       return plotMode === "milk-breast-percent";
     }}
 
+    function isDiaperMode(plotMode) {{
+      return plotMode === "diaper-daily";
+    }}
+
     function isCumulativeMode(plotMode) {{
       return plotMode === "milk-cumulative";
     }}
@@ -1635,7 +1779,20 @@ def build_plot_html(events, child_map, generated_at):
       return plotMode !== "milk-cumulative";
     }}
 
-    function plotModeLabel(plotMode) {{
+    function diaperMetricLabel(diaperMetric) {{
+      if (diaperMetric === "dirty") {{
+        return "dirty diapers";
+      }}
+      if (diaperMetric === "wet") {{
+        return "wet diapers";
+      }}
+      if (diaperMetric === "dry") {{
+        return "dry diapers";
+      }}
+      return "all diapers";
+    }}
+
+    function plotModeLabel(plotMode, diaperMetric) {{
       if (plotMode === "milk-cumulative") {{
         return "cumulative milk";
       }}
@@ -1649,7 +1806,7 @@ def build_plot_html(events, child_map, generated_at):
         return "breast milk share";
       }}
       if (plotMode === "diaper-daily") {{
-        return "daily diapers";
+        return diaperMetricLabel(diaperMetric);
       }}
       if (plotMode === "gap-max") {{
         return "max gap";
@@ -1667,7 +1824,7 @@ def build_plot_html(events, child_map, generated_at):
       if (isPercentMode(plotMode)) {{
         return "%";
       }}
-      if (plotMode === "diaper-daily") {{
+      if (isDiaperMode(plotMode)) {{
         return "changes";
       }}
       return "h";
@@ -1680,27 +1837,49 @@ def build_plot_html(events, child_map, generated_at):
       if (isPercentMode(plotMode)) {{
         return 1;
       }}
-      if (plotMode === "diaper-daily") {{
+      if (isDiaperMode(plotMode)) {{
         return smoothWindow > 1 ? 1 : 0;
       }}
       return 2;
+    }}
+
+    function diaperSeriesField(diaperMetric) {{
+      if (diaperMetric === "all") {{
+        return "diaperAll";
+      }}
+      if (diaperMetric === "dirty") {{
+        return "diaperDirty";
+      }}
+      if (diaperMetric === "wet") {{
+        return "diaperWet";
+      }}
+      if (diaperMetric === "dry") {{
+        return "diaperDry";
+      }}
+      return "diaperAll";
+    }}
+
+    function diaperMetaField(diaperMetric) {{
+      if (diaperMetric === "all") {{
+        return "diaperAllMeta";
+      }}
+      if (diaperMetric === "dirty") {{
+        return "diaperDirtyMeta";
+      }}
+      if (diaperMetric === "wet") {{
+        return "diaperWetMeta";
+      }}
+      if (diaperMetric === "dry") {{
+        return "diaperDryMeta";
+      }}
+      return "diaperAllMeta";
     }}
 
     function isRecordHighlightMode(plotMode) {{
       return plotMode === "milk-max-feed" || plotMode === "gap-max";
     }}
 
-    function buildRecordPointStyle(plotMode, values, accentColor) {{
-      if (!isRecordHighlightMode(plotMode)) {{
-        return {{
-          pointRadius: 1,
-          pointHoverRadius: 4,
-          pointBorderWidth: 0,
-          pointBackgroundColor: accentColor,
-          pointBorderColor: accentColor,
-        }};
-      }}
-
+    function buildPointStyle(plotMode, values, accentColor, diaperMeta) {{
       const pointRadius = [];
       const pointHoverRadius = [];
       const pointBorderWidth = [];
@@ -1708,18 +1887,37 @@ def build_plot_html(events, child_map, generated_at):
       const pointBorderColor = [];
       let currentRecord = null;
 
-      // Scan left-to-right once so record detection stays O(n) per curve.
       for (let idx = 0; idx < values.length; idx += 1) {{
         const value = values[idx];
         const hasValue = value != null && !Number.isNaN(value);
-        const isRecord = hasValue && (currentRecord == null || value > currentRecord);
+        const meta = Array.isArray(diaperMeta) ? diaperMeta[idx] : null;
+        const hasBlowout = Boolean(meta && meta.blowoutCount > 0);
+        const isRecord = isRecordHighlightMode(plotMode) && hasValue && (currentRecord == null || value > currentRecord);
 
         if (isRecord) {{
           currentRecord = value;
         }}
 
-        pointRadius.push(hasValue ? (isRecord ? 4 : 1) : 0);
-        pointHoverRadius.push(hasValue ? (isRecord ? 6 : 4) : 0);
+        if (!hasValue) {{
+          pointRadius.push(0);
+          pointHoverRadius.push(0);
+          pointBorderWidth.push(0);
+          pointBackgroundColor.push(accentColor);
+          pointBorderColor.push(accentColor);
+          continue;
+        }}
+
+        if (hasBlowout) {{
+          pointRadius.push(5);
+          pointHoverRadius.push(7);
+          pointBorderWidth.push(2);
+          pointBackgroundColor.push("#111");
+          pointBorderColor.push(accentColor);
+          continue;
+        }}
+
+        pointRadius.push(isRecord ? 4 : 1);
+        pointHoverRadius.push(isRecord ? 6 : 4);
         pointBorderWidth.push(isRecord ? 2 : 0);
         pointBackgroundColor.push(isRecord ? "#111" : accentColor);
         pointBorderColor.push(accentColor);
@@ -1764,7 +1962,7 @@ def build_plot_html(events, child_map, generated_at):
       return output;
     }}
 
-    function splitSeriesValues(entry, plotMode, nightStartHour, period) {{
+    function splitSeriesValues(entry, plotMode, diaperMetric, nightStartHour, period) {{
       const splitByHour = entry.split || {{}};
       const split = splitByHour[String(nightStartHour)] || null;
       if (!split || !split[period]) {{
@@ -1788,10 +1986,21 @@ def build_plot_html(events, child_map, generated_at):
       if (plotMode === "gap-avg") {{
         return split[period].avgGap || [];
       }}
-      if (plotMode === "diaper-daily") {{
-        return split[period].diaper || [];
+      if (isDiaperMode(plotMode)) {{
+        const diaperField = diaperSeriesField(diaperMetric);
+        return split[period][diaperField] || [];
       }}
       return split[period].daily || [];
+    }}
+
+    function splitSeriesDiaperMeta(entry, diaperMetric, nightStartHour, period) {{
+      const splitByHour = entry.split || {{}};
+      const split = splitByHour[String(nightStartHour)] || null;
+      if (!split || !split[period]) {{
+        return [];
+      }}
+      const metaField = diaperMetaField(diaperMetric);
+      return split[period][metaField] || [];
     }}
 
     function splitSeriesMaxGapPeriods(entry, nightStartHour, period) {{
@@ -1803,7 +2012,7 @@ def build_plot_html(events, child_map, generated_at):
       return split[period].maxGapPeriod || [];
     }}
 
-    function modeSeriesValues(entry, plotMode) {{
+    function modeSeriesValues(entry, plotMode, diaperMetric) {{
       if (plotMode === "milk-cumulative") {{
         return entry.cumulative || [];
       }}
@@ -1822,10 +2031,16 @@ def build_plot_html(events, child_map, generated_at):
       if (plotMode === "gap-avg") {{
         return entry.avgGap || [];
       }}
-      if (plotMode === "diaper-daily") {{
-        return entry.diaper || [];
+      if (isDiaperMode(plotMode)) {{
+        const diaperField = diaperSeriesField(diaperMetric);
+        return entry[diaperField] || [];
       }}
       return entry.daily || [];
+    }}
+
+    function modeSeriesDiaperMeta(entry, diaperMetric) {{
+      const metaField = diaperMetaField(diaperMetric);
+      return entry[metaField] || [];
     }}
 
     function modeSeriesMaxGapPeriods(entry) {{
@@ -1882,18 +2097,19 @@ def build_plot_html(events, child_map, generated_at):
       return split[period].maxGapPeriod || [];
     }}
 
-    function buildDatasets(plotMode, smoothWindow, splitEnabled, nightStartHour) {{
+    function buildDatasets(plotMode, diaperMetric, smoothWindow, splitEnabled, nightStartHour) {{
       const datasets = [];
       series.forEach((entry) => {{
         if (!splitEnabled) {{
-          const raw = modeSeriesValues(entry, plotMode);
+          const raw = modeSeriesValues(entry, plotMode, diaperMetric);
+          const diaperMeta = isDiaperMode(plotMode) ? modeSeriesDiaperMeta(entry, diaperMetric) : null;
           const maxGapPeriods = plotMode === "gap-max" ? modeSeriesMaxGapPeriods(entry) : null;
           const data = isSmoothable(plotMode) ? movingAverage(raw, smoothWindow, todayIndex) : raw;
           if (!hasAnyValue(data)) {{
             return;
           }}
-          const customKey = `single:${{plotMode}}:${{entry.label}}`;
-          const pointStyle = buildRecordPointStyle(plotMode, data, entry.borderColor);
+          const customKey = `single:${{plotMode}}:${{diaperMetric}}:${{entry.label}}`;
+          const pointStyle = buildPointStyle(plotMode, data, entry.borderColor, diaperMeta);
           datasets.push({{
             label: entry.label,
             customKey,
@@ -1910,6 +2126,7 @@ def build_plot_html(events, child_map, generated_at):
             spanGaps: false,
             hidden: hiddenSeriesKeys.has(customKey),
             maxGapPeriods,
+            diaperMeta,
           }});
           return;
         }}
@@ -1919,15 +2136,18 @@ def build_plot_html(events, child_map, generated_at):
           {{ period: "night", label: "Night", dash: [8, 5] }},
         ];
         periodSpecs.forEach((spec) => {{
-          const raw = splitSeriesValues(entry, plotMode, nightStartHour, spec.period);
+          const raw = splitSeriesValues(entry, plotMode, diaperMetric, nightStartHour, spec.period);
+          const diaperMeta = isDiaperMode(plotMode)
+            ? splitSeriesDiaperMeta(entry, diaperMetric, nightStartHour, spec.period)
+            : null;
           const maxGapPeriods =
             plotMode === "gap-max" ? splitSeriesMaxGapPeriods(entry, nightStartHour, spec.period) : null;
           const data = isSmoothable(plotMode) ? movingAverage(raw, smoothWindow, todayIndex) : raw;
           if (!hasAnyValue(data)) {{
             return;
           }}
-          const customKey = `split:${{plotMode}}:${{entry.label}}:${{spec.period}}`;
-          const pointStyle = buildRecordPointStyle(plotMode, data, entry.borderColor);
+          const customKey = `split:${{plotMode}}:${{diaperMetric}}:${{entry.label}}:${{spec.period}}`;
+          const pointStyle = buildPointStyle(plotMode, data, entry.borderColor, diaperMeta);
           datasets.push({{
             label: `${{entry.label}} (${{spec.label}})`,
             customKey,
@@ -1945,6 +2165,7 @@ def build_plot_html(events, child_map, generated_at):
             spanGaps: false,
             hidden: hiddenSeriesKeys.has(customKey),
             maxGapPeriods,
+            diaperMeta,
           }});
         }});
       }});
@@ -1960,7 +2181,7 @@ def build_plot_html(events, child_map, generated_at):
         const data = isSmoothable(plotMode) ? movingAverage(raw, smoothWindow, todayIndex) : raw;
         if (hasAnyValue(data)) {{
           const customKey = `combined:${{plotMode}}:all-babies`;
-          const pointStyle = buildRecordPointStyle(plotMode, data, "#ffffff");
+          const pointStyle = buildPointStyle(plotMode, data, "#ffffff", null);
           datasets.push({{
             label: allBabiesGap.label || "All Babies",
             customKey,
@@ -1996,7 +2217,7 @@ def build_plot_html(events, child_map, generated_at):
         }}
         const customKey = `combined:${{plotMode}}:all-babies:${{spec.period}}`;
         const labelBase = allBabiesGap.label || "All Babies";
-        const pointStyle = buildRecordPointStyle(plotMode, data, "#ffffff");
+        const pointStyle = buildPointStyle(plotMode, data, "#ffffff", null);
         datasets.push({{
           label: `${{labelBase}} (${{spec.label}})`,
           customKey,
@@ -2019,7 +2240,7 @@ def build_plot_html(events, child_map, generated_at):
       return datasets;
     }}
 
-    function yAxisTitle(plotMode, smoothWindow, splitEnabled, nightStartHour) {{
+    function yAxisTitle(plotMode, diaperMetric, smoothWindow, splitEnabled, nightStartHour) {{
       let baseTitle = "";
       if (plotMode === "milk-cumulative") {{
         baseTitle = "Cumulative milk eaten (mL)";
@@ -2036,7 +2257,7 @@ def build_plot_html(events, child_map, generated_at):
           ? "Breast milk share of bottle intake (%)"
           : `Breast milk share of bottle intake (%, ${{smoothWindow}}-day moving avg)`;
       }} else if (plotMode === "diaper-daily") {{
-        baseTitle = "Diaper changes per day";
+        baseTitle = `${{diaperMetricLabel(diaperMetric).replace(/^./, (c) => c.toUpperCase())}} per day`;
       }} else if (plotMode === "gap-max") {{
         baseTitle = "Max feeding gap per day (hours)";
       }} else if (plotMode === "gap-avg") {{
@@ -2129,7 +2350,7 @@ def build_plot_html(events, child_map, generated_at):
       textEl.textContent = `Visible range: ${{labels[minIdx]}} to ${{labels[maxIdx]}}`;
     }}
 
-    function updateControlStates(plotMode, splitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect) {{
+    function updateControlStates(plotMode, splitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect, diaperMetricControls, diaperMetricSelect) {{
       if (modeSelect) {{
         modeSelect.disabled = false;
       }}
@@ -2142,6 +2363,13 @@ def build_plot_html(events, child_map, generated_at):
       }}
       if (nightStartSelect) {{
         nightStartSelect.disabled = !(splitAvailable && splitEnabled);
+      }}
+      const diaperControlsVisible = isDiaperMode(plotMode);
+      if (diaperMetricControls) {{
+        diaperMetricControls.hidden = !diaperControlsVisible;
+      }}
+      if (diaperMetricSelect) {{
+        diaperMetricSelect.disabled = !diaperControlsVisible;
       }}
     }}
 
@@ -2159,6 +2387,8 @@ def build_plot_html(events, child_map, generated_at):
     const noData = document.getElementById("no-data");
     const chartWrap = document.querySelector(".chart-wrap");
     const modeSelect = document.getElementById("series-mode");
+    const diaperMetricControls = document.getElementById("diaper-metric-controls");
+    const diaperMetricSelect = document.getElementById("diaper-metric");
     const smoothSlider = document.getElementById("smooth-window");
     const splitToggle = document.getElementById("split-day-night");
     const nightStartSelect = document.getElementById("night-start-hour");
@@ -2173,6 +2403,13 @@ def build_plot_html(events, child_map, generated_at):
 
     function currentSplitEnabled() {{
       return Boolean(splitToggle && splitToggle.checked);
+    }}
+
+    function currentDiaperMetric() {{
+      if (!diaperMetricSelect) {{
+        return "all";
+      }}
+      return diaperMetricSelect.value || "all";
     }}
 
     let chart = null;
@@ -2195,10 +2432,17 @@ def build_plot_html(events, child_map, generated_at):
       if (nightStartSelect) {{
         nightStartSelect.disabled = true;
       }}
+      if (diaperMetricSelect) {{
+        diaperMetricSelect.disabled = true;
+      }}
+      if (diaperMetricControls) {{
+        diaperMetricControls.hidden = true;
+      }}
       updateSmoothingLabel("milk-daily", 1);
       updateSplitLabel(false, defaultNightStart);
     }} else {{
       const initialMode = "milk-daily";
+      const initialDiaperMetric = "all";
       const initialSmoothWindow = 1;
       const initialSplitEnabled = false;
       const initialNightStart = defaultNightStart;
@@ -2206,7 +2450,7 @@ def build_plot_html(events, child_map, generated_at):
         type: "line",
         data: {{
           labels,
-          datasets: buildDatasets(initialMode, initialSmoothWindow, initialSplitEnabled, initialNightStart),
+          datasets: buildDatasets(initialMode, initialDiaperMetric, initialSmoothWindow, initialSplitEnabled, initialNightStart),
         }},
         options: {{
           responsive: true,
@@ -2251,7 +2495,25 @@ def build_plot_html(events, child_map, generated_at):
                     const formulaPercent = Number((100 - breastPercent).toFixed(decimals));
                     return `${{context.dataset.label}}: ${{breastPercent.toFixed(decimals)}}% breast milk, ${{formulaPercent.toFixed(decimals)}}% formula${{smoothSuffix}}${{splitSuffix}}`;
                   }}
-                  const mainLine = `${{context.dataset.label}}: ${{context.parsed.y.toFixed(decimals)}} ${{unit}} (${{plotModeLabel(plotMode)}}${{smoothSuffix}}${{splitSuffix}})`;
+                  const diaperMetric = context.chart.$diaperMetric || "all";
+                  const mainLine = `${{context.dataset.label}}: ${{context.parsed.y.toFixed(decimals)}} ${{unit}} (${{plotModeLabel(plotMode, diaperMetric)}}${{smoothSuffix}}${{splitSuffix}})`;
+                  if (isDiaperMode(plotMode)) {{
+                    const diaperMeta = context.dataset.diaperMeta || [];
+                    const meta = diaperMeta[context.dataIndex] || null;
+                    if (meta) {{
+                      const detailLines = [mainLine];
+                      if (windowSize > 1) {{
+                        detailLines.push(`raw matches: ${{meta.count}}`);
+                      }}
+                      if (meta.blowoutCount > 0) {{
+                        detailLines.push(`blowouts: ${{meta.blowoutCount}}`);
+                        if (Array.isArray(meta.blowoutDetails) && meta.blowoutDetails.length) {{
+                          detailLines.push(`notes: ${{meta.blowoutDetails.join("; ")}}`);
+                        }}
+                      }}
+                      return detailLines;
+                    }}
+                  }}
                   if (plotMode === "gap-max" && windowSize <= 1) {{
                     const periods = context.dataset.maxGapPeriods || [];
                     const periodText = periods[context.dataIndex] || "";
@@ -2297,12 +2559,13 @@ def build_plot_html(events, child_map, generated_at):
             y: {{
               ticks: {{ color: "#d2d2d2" }},
               grid: {{ color: "rgba(255,255,255,0.08)" }},
-              title: {{ display: true, color: "#d2d2d2", text: yAxisTitle(initialMode, initialSmoothWindow, initialSplitEnabled, initialNightStart) }},
+               title: {{ display: true, color: "#d2d2d2", text: yAxisTitle(initialMode, initialDiaperMetric, initialSmoothWindow, initialSplitEnabled, initialNightStart) }},
             }},
           }},
         }},
       }});
       chart.$mode = initialMode;
+      chart.$diaperMetric = initialDiaperMetric;
       chart.$smoothWindow = initialSmoothWindow;
       chart.$splitEnabled = initialSplitEnabled;
       chart.$nightStart = initialNightStart;
@@ -2313,13 +2576,16 @@ def build_plot_html(events, child_map, generated_at):
       if (smoothSlider) {{
         smoothSlider.value = String(initialSmoothWindow);
       }}
+      if (diaperMetricSelect) {{
+        diaperMetricSelect.value = initialDiaperMetric;
+      }}
       if (splitToggle) {{
         splitToggle.checked = initialSplitEnabled;
       }}
       if (nightStartSelect) {{
         nightStartSelect.value = String(initialNightStart);
       }}
-      updateControlStates(initialMode, initialSplitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect);
+      updateControlStates(initialMode, initialSplitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect, diaperMetricControls, diaperMetricSelect);
       updateSmoothingLabel(initialMode, initialSmoothWindow);
       updateSplitLabel(initialSplitEnabled, initialNightStart);
       updateVisibleRange(chart);
@@ -2330,15 +2596,17 @@ def build_plot_html(events, child_map, generated_at):
         return;
       }}
       const mode = chart.$mode || "milk-daily";
+      const diaperMetric = chart.$diaperMetric || currentDiaperMetric();
       const smoothWindow = chart.$smoothWindow || 1;
       const splitEnabled = currentSplitEnabled();
       const nightStart = currentNightStart();
+      chart.$diaperMetric = diaperMetric;
       chart.$splitEnabled = splitEnabled;
       chart.$nightStart = nightStart;
-      updateControlStates(mode, splitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect);
-      chart.data.datasets = buildDatasets(mode, smoothWindow, splitEnabled, nightStart);
+      updateControlStates(mode, splitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect, diaperMetricControls, diaperMetricSelect);
+      chart.data.datasets = buildDatasets(mode, diaperMetric, smoothWindow, splitEnabled, nightStart);
       applyHiddenSeriesState(chart);
-      chart.options.scales.y.title.text = yAxisTitle(mode, smoothWindow, splitEnabled, nightStart);
+      chart.options.scales.y.title.text = yAxisTitle(mode, diaperMetric, smoothWindow, splitEnabled, nightStart);
       updateYAxisBounds(chart, mode);
       chart.update(animationMode);
       updateSmoothingLabel(mode, smoothWindow);
@@ -2353,6 +2621,16 @@ def build_plot_html(events, child_map, generated_at):
         }}
         chart.$mode = event.target.value || "milk-daily";
         refreshChart();
+      }});
+    }}
+
+    if (diaperMetricSelect) {{
+      diaperMetricSelect.addEventListener("change", (event) => {{
+        if (!chart) {{
+          return;
+        }}
+        chart.$diaperMetric = event.target.value || "all";
+        refreshChart("none");
       }});
     }}
 
@@ -2409,7 +2687,7 @@ def build_plot_html(events, child_map, generated_at):
 <body>
   <div class=\"container\">
     <h1>Plots</h1>
-    <p class=\"subtitle\">Choose a plot (milk totals, diaper counts, or feeding gaps). Day/Night split uses a 12-hour night window from the selected start time (default 20:00). Drag horizontally to zoom; hold Shift and drag to pan.</p>
+    <p class=\"subtitle\">Choose a plot (milk totals, diaper counts, or feeding gaps). Day/Night split uses a 12-hour night window from the selected start time (default 20:00). Drag horizontally to zoom; hold Shift and drag to pan. On diaper plots, dark highlighted dots mark days with at least one blowout.</p>
     <div class=\"actions\">
       <a class=\"btn\" href=\"/\">Back to Main View</a>
       <select id=\"series-mode\" class=\"mode-select\" aria-label=\"Series mode\">
@@ -2422,6 +2700,15 @@ def build_plot_html(events, child_map, generated_at):
         <option value=\"gap-max\">Max Feeding Gap</option>
         <option value=\"gap-avg\">Average Feeding Gap</option>
       </select>
+      <label id=\"diaper-metric-controls\" class=\"subtitle\" hidden>
+        Diaper type
+        <select id=\"diaper-metric\" class=\"mode-select\" aria-label=\"Diaper type\">
+          <option value=\"all\" selected>All</option>
+          <option value=\"dirty\">Dirty</option>
+          <option value=\"wet\">Wet</option>
+          <option value=\"dry\">Dry</option>
+        </select>
+      </label>
       <label class=\"toggle-label\" for=\"split-day-night\">
         <input id=\"split-day-night\" type=\"checkbox\" />
         Day/Night Split
