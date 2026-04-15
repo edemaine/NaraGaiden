@@ -1752,6 +1752,101 @@ def build_plot_html(events, child_map, generated_at):
       return `${{year}}-${{month}}-${{day}}`;
     }}
 
+    function parseDayKey(dayKey) {{
+      if (!dayKey) {{
+        return null;
+      }}
+      const parts = String(dayKey).split("-");
+      if (parts.length !== 3) {{
+        return null;
+      }}
+      const year = Number(parts[0]);
+      const month = Number(parts[1]);
+      const day = Number(parts[2]);
+      if ([year, month, day].some((value) => Number.isNaN(value))) {{
+        return null;
+      }}
+      return new Date(year, month - 1, day);
+    }}
+
+    function isWeeklyBoundary(index) {{
+      const dayDate = parseDayKey(labels[index]);
+      return Boolean(dayDate) && dayDate.getDay() === 0;
+    }}
+
+    function visibleXRange(scale) {{
+      if (!scale) {{
+        return {{ min: 0, max: labels.length - 1 }};
+      }}
+      return {{
+        min: Math.max(0, Math.ceil(scale.min ?? 0)),
+        max: Math.min(labels.length - 1, Math.floor(scale.max ?? labels.length - 1)),
+      }};
+    }}
+
+    function tickDataIndex(value, fallbackIndex) {{
+      const numericValue = Number(value);
+      if (Number.isFinite(numericValue)) {{
+        return Math.round(numericValue);
+      }}
+      return fallbackIndex;
+    }}
+
+    function isWeeklyTickValue(value, fallbackIndex) {{
+      return isWeeklyBoundary(tickDataIndex(value, fallbackIndex));
+    }}
+
+    function weeklyLabelStep(scale) {{
+      const visibleRange = visibleXRange(scale);
+      let weeklyCount = 0;
+      for (let idx = visibleRange.min; idx <= visibleRange.max; idx += 1) {{
+        if (isWeeklyBoundary(idx)) {{
+          weeklyCount += 1;
+        }}
+      }}
+      const targetLabelCount = Math.max(2, Math.floor(((scale && scale.width) || 0) / 90));
+      return Math.max(1, Math.ceil(weeklyCount / targetLabelCount));
+    }}
+
+    function visibleDayLabelStep(scale) {{
+      const visibleRange = visibleXRange(scale);
+      const visibleDayCount = Math.max(1, visibleRange.max - visibleRange.min + 1);
+      const targetLabelCount = Math.max(2, Math.floor(((scale && scale.width) || 0) / 90));
+      return Math.max(1, Math.ceil(visibleDayCount / targetLabelCount));
+    }}
+
+    function weeklyLabelForIndex(index, scale) {{
+      if (!isWeeklyBoundary(index)) {{
+        return "";
+      }}
+      const visibleRange = visibleXRange(scale);
+      if (index < visibleRange.min || index > visibleRange.max) {{
+        return "";
+      }}
+      const step = weeklyLabelStep(scale);
+      let weeklyIndex = 0;
+      for (let idx = visibleRange.min; idx < index; idx += 1) {{
+        if (isWeeklyBoundary(idx)) {{
+          weeklyIndex += 1;
+        }}
+      }}
+      return weeklyIndex % step === 0 ? labels[index] : "";
+    }}
+
+    function axisLabelForTickValue(value, fallbackIndex, scale) {{
+      const dataIndex = tickDataIndex(value, fallbackIndex);
+      const visibleRange = visibleXRange(scale);
+      if (dataIndex < visibleRange.min || dataIndex > visibleRange.max) {{
+        return "";
+      }}
+      const visibleDayCount = Math.max(1, visibleRange.max - visibleRange.min + 1);
+      if (visibleDayCount <= 28) {{
+        const step = visibleDayLabelStep(scale);
+        return (dataIndex - visibleRange.min) % step === 0 ? labels[dataIndex] : "";
+      }}
+      return weeklyLabelForIndex(dataIndex, scale);
+    }}
+
     const todayLabel = localDayKey(new Date());
     const todayIndex = labels.indexOf(todayLabel);
 
@@ -1916,8 +2011,8 @@ def build_plot_html(events, child_map, generated_at):
           continue;
         }}
 
-        pointRadius.push(isRecord ? 4 : 1);
-        pointHoverRadius.push(isRecord ? 6 : 4);
+        pointRadius.push(isRecord ? 4 : 2);
+        pointHoverRadius.push(isRecord ? 6 : 5);
         pointBorderWidth.push(isRecord ? 2 : 0);
         pointBackgroundColor.push(isRecord ? "#111" : accentColor);
         pointBorderColor.push(accentColor);
@@ -2551,11 +2646,21 @@ def build_plot_html(events, child_map, generated_at):
             }},
           }},
           scales: {{
-            x: {{
-              ticks: {{ color: "#d2d2d2", maxTicksLimit: 12 }},
-              grid: {{ color: "rgba(255,255,255,0.08)" }},
-              title: {{ display: true, color: "#d2d2d2", text: "Day" }},
-            }},
+             x: {{
+               ticks: {{
+                  color: "#d2d2d2",
+                  autoSkip: false,
+                   maxRotation: 0,
+                  callback: function(value, index) {{
+                    return axisLabelForTickValue(value, index, this);
+                  }},
+                }},
+                grid: {{
+                  color: (context) => isWeeklyTickValue(context.tick && context.tick.value, context.index) ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0)",
+                  lineWidth: (context) => isWeeklyTickValue(context.tick && context.tick.value, context.index) ? 1 : 0,
+                }},
+               title: {{ display: true, color: "#d2d2d2", text: "Day" }},
+             }},
             y: {{
               ticks: {{ color: "#d2d2d2" }},
               grid: {{ color: "rgba(255,255,255,0.08)" }},
