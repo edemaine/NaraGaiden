@@ -140,7 +140,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         previewEmpty.visibility = View.GONE
-        rows.forEach { row ->
+        rows.forEachIndexed { index, row ->
             val rowView = layoutInflater.inflate(R.layout.app_row, previewList, false)
             val nameView = rowView.findViewById<TextView>(R.id.app_row_name)
             val feedLabelView = rowView.findViewById<TextView>(R.id.app_row_feed_label)
@@ -158,6 +158,22 @@ class MainActivity : AppCompatActivity() {
             applyBadge(diaperWhenView, row.diaperBeginDt)
 
             previewList.addView(rowView)
+            if (index < rows.lastIndex) {
+                previewList.addView(buildRowDivider())
+            }
+        }
+    }
+
+    private fun buildRowDivider(): View {
+        return View(this).apply {
+            background = getDrawable(R.drawable.widget_divider_horizontal)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                resources.getDimensionPixelSize(R.dimen.widget_divider_thickness)
+            ).apply {
+                topMargin = resources.getDimensionPixelSize(R.dimen.app_preview_row_divider_margin)
+                bottomMargin = resources.getDimensionPixelSize(R.dimen.app_preview_row_divider_margin)
+            }
         }
     }
 
