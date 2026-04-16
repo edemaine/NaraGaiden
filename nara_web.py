@@ -2011,7 +2011,7 @@ def build_plot_html(events, child_map, generated_at):
           continue;
         }}
 
-        pointRadius.push(isRecord ? 4 : 2);
+        pointRadius.push(isRecord ? 4 : 3);
         pointHoverRadius.push(isRecord ? 6 : 5);
         pointBorderWidth.push(isRecord ? 2 : 0);
         pointBackgroundColor.push(isRecord ? "#111" : accentColor);
