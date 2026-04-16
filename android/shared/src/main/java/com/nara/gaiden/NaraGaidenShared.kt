@@ -8,6 +8,7 @@ import java.util.Locale
 
 private const val POOP_ALERT_THRESHOLD_MS = 2L * 24L * 60L * 60L * 1000L
 private const val POOP_ALERT_EMOJI = "⚠️"
+private const val SOFT_WRAP_HINT = "\u200B"
 
 data class NaraGaidenRow(
     val name: String,
@@ -24,20 +25,32 @@ data class NaraGaidenRow(
         get() = NaraGaidenFormat.formatPoopAlertDays(lastPoopDiaperBeginDt) != null
 
     val displayName: String
-        get() {
-            val indicators = buildString {
-                if (hasPoopAlert) {
-                    append(POOP_ALERT_EMOJI)
+        get() = formatDisplayName(indicatorSeparator = "")
+
+    val displayNameWithWrapOpportunities: String
+        get() = formatDisplayName(indicatorSeparator = SOFT_WRAP_HINT)
+
+    private fun formatDisplayName(indicatorSeparator: String): String {
+        val indicators = buildString {
+            fun appendIndicator(indicator: String) {
+                if (isNotEmpty()) {
+                    append(indicatorSeparator)
                 }
-                repeat(vitaminsTodayCount.coerceAtLeast(0)) { append("💊") }
-                repeat(medicationTodayCount.coerceAtLeast(0)) { append("💉") }
-                repeat(bathsTodayCount.coerceAtLeast(0)) { append("🛁") }
+                append(indicator)
             }
-            if (indicators.isEmpty()) {
-                return name
+
+            if (hasPoopAlert) {
+                appendIndicator(POOP_ALERT_EMOJI)
             }
-            return "$name $indicators"
+            repeat(vitaminsTodayCount.coerceAtLeast(0)) { appendIndicator("💊") }
+            repeat(medicationTodayCount.coerceAtLeast(0)) { appendIndicator("💉") }
+            repeat(bathsTodayCount.coerceAtLeast(0)) { appendIndicator("🛁") }
         }
+        if (indicators.isEmpty()) {
+            return name
+        }
+        return "$name $indicators"
+    }
 
     fun poopAlertText(nowMs: Long = System.currentTimeMillis()): String? {
         val daysText = NaraGaidenFormat.formatPoopAlertDays(lastPoopDiaperBeginDt, nowMs) ?: return null
