@@ -70,8 +70,8 @@ to get a window with no location bar or other chrome.
 7. Connect web browser to `localhost:8888` (or modify to your IP address)
    for the web view.
 8. For mobile apps, configure clients to point at your server:
-   - iOS: edit `ios/Shared/NaraAPI.swift` (`NaraConfig.serverURLString`).
-   - Android: edit `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt`.
+   - iOS: edit `ios/Shared/NaraAPI.swift` (`NaraConfig.serverURLString`) to your server base URL.
+   - Android: edit `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt` to your server base URL.
 9. Build/install the Android, Wear OS, and/or iOS apps as desired:
    - iOS setup details: `ios/README.md`
    - Android + Wear OS setup details: `android/README.md`

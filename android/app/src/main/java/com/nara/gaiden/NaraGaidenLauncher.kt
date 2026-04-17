@@ -51,4 +51,16 @@ object NaraGaidenLauncher {
             return
         }
     }
+
+    fun launchPlots(context: Context) {
+        val plotIntent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse(NaraGaidenConfig.plotUrl)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            context.startActivity(plotIntent)
+        } catch (_: Exception) {
+            return
+        }
+    }
 }

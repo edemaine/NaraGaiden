@@ -38,6 +38,10 @@ struct ContentView: View {
                     }
                 }
 
+                Button("Plots") {
+                    openPlots()
+                }
+
                 Button("Nara Baby") {
                     openNaraBaby()
                 }
@@ -102,6 +106,10 @@ struct ContentView: View {
             }
             openNaraBabyStore()
         }
+    }
+
+    private func openPlots() {
+        UIApplication.shared.open(NaraConfig.plotURL)
     }
 
     private func openNaraBabyStore() {

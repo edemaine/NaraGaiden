@@ -49,7 +49,7 @@ data class NaraGaidenFetchResult(
 
 object NaraGaidenApi {
     fun fetch(): NaraGaidenFetchResult {
-        val url = URL(NaraGaidenConfig.serverUrl)
+        val url = URL(NaraGaidenConfig.jsonUrl)
         val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = 15000
         connection.readTimeout = 15000

@@ -6,7 +6,7 @@ Load `NaraGaiden.xcodeproj` with Xcode.
 
 ## Configuration
 
-- Update `NaraConfig.serverURLString` in `ios/Shared/NaraAPI.swift` to your server URL, for example `http://192.168.1.20:8787/json`.
+- Update `NaraConfig.serverURLString` in `ios/Shared/NaraAPI.swift` to your server base URL, for example `http://192.168.1.20:8787`.
 - If you use HTTP instead of HTTPS, add an ATS exception in both the app and widget extension Info.plist. The simplest dev option is:
   - NSAppTransportSecurity -> NSAllowsArbitraryLoads = YES
 

@@ -1,10 +1,18 @@
 import Foundation
 
 struct NaraConfig {
-    static let serverURLString = "http://192.168.2.1:8888/json"
+    static let serverURLString = "http://192.168.2.1:8888"
 
     static var serverURL: URL {
-        URL(string: serverURLString) ?? URL(string: "http://192.168.2.1:8888/json")!
+        URL(string: serverURLString) ?? URL(string: "http://192.168.2.1:8888")!
+    }
+
+    static var jsonURL: URL {
+        serverURL.appendingPathComponent("json")
+    }
+
+    static var plotURL: URL {
+        serverURL.appendingPathComponent("plot")
     }
 }
 
@@ -144,7 +152,7 @@ struct NaraEvent: Codable {
 
 enum NaraAPI {
     static func fetch() async throws -> NaraPayload {
-        var request = URLRequest(url: NaraConfig.serverURL)
+        var request = URLRequest(url: NaraConfig.jsonURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 15
         let (data, response) = try await URLSession.shared.data(for: request)

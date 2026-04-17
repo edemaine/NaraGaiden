@@ -21,8 +21,8 @@ The Wear app syncs through the phone app.
    - Wait for "Gradle Sync Finished".
    - If Android Studio asks to update Gradle or the Android plugin, accept recommended updates.
 4) Check the server URL
-   - Open `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt`.
-   - Change server IP or port if yours are different.
+    - Open `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt`.
+    - Change the server base URL if your IP or port are different.
 5) Connect your Android phone
     - Physical cable:
       - Use a USB cable to connect the phone to your computer.

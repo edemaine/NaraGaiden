@@ -52,6 +52,11 @@ class MainActivity : AppCompatActivity() {
         openButton.setOnClickListener {
             NaraGaidenLauncher.launchNaraApp(this)
         }
+
+        val plotsButton = findViewById<Button>(R.id.open_plots_button)
+        plotsButton.setOnClickListener {
+            NaraGaidenLauncher.launchPlots(this)
+        }
     }
 
     override fun onResume() {
