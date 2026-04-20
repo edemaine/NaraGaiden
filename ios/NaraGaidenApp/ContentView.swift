@@ -9,6 +9,9 @@ struct ContentView: View {
     @State private var lastUpdated: Date?
     @State private var isFetching = false
     @State private var payload: NaraPayload?
+    @State private var showingPasswordPrompt = false
+    @State private var passwordDraft = ""
+    @State private var passwordPromptMessage = "Enter the server password for this device."
     private let refreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -47,6 +50,10 @@ struct ContentView: View {
                 }
             }
 
+            Button("Password") {
+                presentPasswordPrompt(rejected: false)
+            }
+
             if let payload {
                 NaraAppPreview(payload: payload)
             } else {
@@ -75,6 +82,38 @@ struct ContentView: View {
                 await fetchAndReload()
             }
         }
+        .sheet(isPresented: $showingPasswordPrompt) {
+            NavigationStack {
+                Form {
+                    Section {
+                        SecureField("Server password", text: $passwordDraft)
+                            .textContentType(.password)
+                    } footer: {
+                        Text(passwordPromptMessage)
+                    }
+                }
+                .navigationTitle("Server Password")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") {
+                            showingPasswordPrompt = false
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            let password = passwordDraft
+                            NaraPasswordStore.save(password)
+                            showingPasswordPrompt = false
+                            Task {
+                                await fetchAndReload()
+                            }
+                        }
+                        .disabled(passwordDraft.isEmpty)
+                    }
+                }
+            }
+        }
     }
 
     private func fetchAndReload() async {
@@ -90,10 +129,21 @@ struct ContentView: View {
             lastUpdated = Date()
             self.payload = payload
             WidgetCenter.shared.reloadTimelines(ofKind: "NaraGaidenLockWidget")
+        } catch let error as NaraAPIError {
+            status = "Error: \(error.localizedDescription)"
+            presentPasswordPrompt(rejected: error == .passwordRejected)
         } catch {
             status = "Error: \(error.localizedDescription)"
         }
         isFetching = false
+    }
+
+    private func presentPasswordPrompt(rejected: Bool) {
+        passwordDraft = rejected ? "" : (NaraPasswordStore.load() ?? "")
+        passwordPromptMessage = rejected
+            ? "The saved password was not accepted. Enter the current server password."
+            : "Enter the server password for this device."
+        showingPasswordPrompt = true
     }
 
     private func openNaraBaby() {

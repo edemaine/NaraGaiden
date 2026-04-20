@@ -46,6 +46,7 @@
 		0A5925882F2FFC86006CB177 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		0A59258A2F2FFC86006CB177 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		0A5925AA2F2FFCB9006CB177 /* NaraAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NaraAPI.swift; sourceTree = "<group>"; };
+		0AB0C0012F400001006CB177 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		0A7800682F3270720046F40C /* NaraStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NaraStyle.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -127,6 +128,7 @@
 		0A5925872F2FFC86006CB177 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				0AB0C0022F400001006CB177 /* Config */,
 				0A5925AB2F2FFCB9006CB177 /* Shared */,
 				0A5925882F2FFC86006CB177 /* WidgetKit.framework */,
 				0A59258A2F2FFC86006CB177 /* SwiftUI.framework */,
@@ -141,6 +143,14 @@
 				0A7800682F3270720046F40C /* NaraStyle.swift */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		0AB0C0022F400001006CB177 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				0AB0C0012F400001006CB177 /* Base.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -398,9 +408,11 @@
 		};
 		0A5925802F2FFBEB006CB177 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0AB0C0012F400001006CB177 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = NaraGaidenApp/NaraGaiden.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ASY59VXD2N;
@@ -432,9 +444,11 @@
 		};
 		0A5925812F2FFBEB006CB177 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0AB0C0012F400001006CB177 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = NaraGaidenApp/NaraGaiden.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ASY59VXD2N;
@@ -466,9 +480,11 @@
 		};
 		0A59259F2F2FFC89006CB177 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0AB0C0012F400001006CB177 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = NaraGaidenExtension/NaraGaidenExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ASY59VXD2N;
@@ -497,9 +513,11 @@
 		};
 		0A5925A02F2FFC89006CB177 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 0AB0C0012F400001006CB177 /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = NaraGaidenExtension/NaraGaidenExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ASY59VXD2N;

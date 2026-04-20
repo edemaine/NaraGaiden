@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NaraGaidenServerURL</key>
+	<string>$(NARAGAIDEN_SERVER_URL)</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app connects to a local Nara server on your home network.</string>
 	<key>NSAppTransportSecurity</key>

@@ -5,5 +5,12 @@
     <string name="refresh_widget">Refresh</string>
     <string name="open_plots">Plots</string>
     <string name="open_nara_baby">Nara Baby</string>
+    <string name="manage_password">Password</string>
     <string name="server_label">Server</string>
+    <string name="password_title">Server Password</string>
+    <string name="password_hint">Enter password</string>
+    <string name="password_required_message">Enter the Nara server password for this device.</string>
+    <string name="password_rejected_message">The saved password was not accepted. Enter the current server password.</string>
+    <string name="password_save">Save</string>
+    <string name="password_missing_status">Password required</string>
 </resources>

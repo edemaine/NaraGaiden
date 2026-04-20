@@ -1,0 +1,4 @@
+# Copy the setting you want into android/local.properties.
+# Keep your existing sdk.dir line there; this file is just an example.
+
+naraGaidenServerUrl=http://example.com:8787

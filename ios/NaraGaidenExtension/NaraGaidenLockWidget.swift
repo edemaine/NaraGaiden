@@ -62,12 +62,12 @@ enum NaraCache {
     static func save(_ payload: NaraPayload) {
         let encoder = JSONEncoder()
         if let data = try? encoder.encode(payload) {
-            UserDefaults.standard.set(data, forKey: key)
+            NaraSharedStore.defaults.set(data, forKey: key)
         }
     }
 
     static func load() -> NaraPayload? {
-        guard let data = UserDefaults.standard.data(forKey: key) else {
+        guard let data = NaraSharedStore.defaults.data(forKey: key) else {
             return nil
         }
         let decoder = JSONDecoder()

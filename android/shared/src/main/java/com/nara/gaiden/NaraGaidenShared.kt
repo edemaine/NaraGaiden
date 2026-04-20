@@ -1,5 +1,6 @@
 package com.nara.gaiden
 
+import android.content.Context
 import android.graphics.Color
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -64,10 +65,28 @@ object NaraGaidenStore {
     const val KEY_UPDATED = "last_updated"
     const val KEY_LAST_SUCCESS_MS = "last_success_ms"
     const val KEY_LAST_ERROR = "last_error"
+    const val KEY_PASSWORD = "server_password"
     const val KEY_GAIDEN_ARMED_MS = "gaiden_armed_ms"
     const val KEY_NARA_ARMED_MS = "nara_armed_ms"
     const val KEY_WEAR_RENDER_ONLY_UNTIL_MS = "wear_render_only_until_ms"
     const val KEY_WEAR_REFRESHING_UNTIL_MS = "wear_refreshing_until_ms"
+}
+
+object NaraGaidenPasswordStore {
+    fun get(context: Context): String? {
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(NaraGaidenStore.KEY_PASSWORD, null)?.takeIf { it.isNotEmpty() }
+    }
+
+    fun save(context: Context, password: String) {
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(NaraGaidenStore.KEY_PASSWORD, password).apply()
+    }
+
+    fun clear(context: Context) {
+        val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().remove(NaraGaidenStore.KEY_PASSWORD).apply()
+    }
 }
 
 object NaraGaidenContent {

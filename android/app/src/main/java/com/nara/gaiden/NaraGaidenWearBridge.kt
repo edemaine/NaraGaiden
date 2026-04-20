@@ -25,7 +25,7 @@ object NaraGaidenWearBridge {
         val prefs = context.getSharedPreferences(NaraGaidenStore.PREFS_NAME, Context.MODE_PRIVATE)
         try {
             Log.d(TAG, "Refreshing phone cache from server")
-            val result = NaraGaidenApi.fetch()
+            val result = NaraGaidenApi.fetch(context.applicationContext)
             val successMs = System.currentTimeMillis()
             prefs.edit {
                 putString(NaraGaidenStore.KEY_JSON, result.json)

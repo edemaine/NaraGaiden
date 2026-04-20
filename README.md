@@ -13,8 +13,8 @@ running the Nara Baby app.
 It offers the data via a web server,
 which a web, Android, Wear OS, or iOS app can connect to.
 
-Note that there is no authentication. This is safe within a LAN,
-but you might not want to broadcast your babies' data to the Internet.
+The server can optionally require a password before serving any baby data.
+Set `NARA_PASSWORD` in the environment or a local `.env` file if you want protection enabled.
 
 ## Web View
 
@@ -64,17 +64,23 @@ to get a window with no location bar or other chrome.
 5. Optional: Try running the exporter:
    - `python nara_live_export.py`
    - Optionally set `ADB_DEVICE` to target the specific emulator/device.
-6. Run the server:
-   - `python nara_web.py --host 0.0.0.0 --port 8888 --adb-device emulator-5554`
-   - (`--adb-device` should match whatever `adb devices` lists)
-7. Connect web browser to `localhost:8888` (or modify to your IP address)
-   for the web view.
-8. For mobile apps, configure clients to point at your server:
-   - iOS: edit `ios/Shared/NaraAPI.swift` (`NaraConfig.serverURLString`) to your server base URL.
-   - Android: edit `android/app/src/main/java/com/nara/gaiden/NaraGaidenConfig.kt` to your server base URL.
-9. Build/install the Android, Wear OS, and/or iOS apps as desired:
-   - iOS setup details: `ios/README.md`
-   - Android + Wear OS setup details: `android/README.md`
+6. Optional: create a local `.env` from `.env.example` and set `NARA_PASSWORD`
+   and/or other settings; `.env` is ignored by Git, so it stays local.
+7. Run the server:
+    - `python nara_web.py --host 0.0.0.0 --port 8888 --adb-device emulator-5554`
+    - (`--adb-device` should match whatever `adb devices` lists)
+    - Settings can also be set via environment variables or a local `.env` file.
+8. Connect web browser to `localhost:8888` (or modify to your IP address)
+    for the web view.
+   If `NARA_PASSWORD` is set, browsers will prompt for the password once and remember it locally.
+9. For mobile apps, configure clients to point at your server:
+    - iOS: copy `ios/Config/Local.xcconfig.example` to `ios/Config/Local.xcconfig` and set `NARAGAIDEN_SERVER_URL`, for example `https:/$()/your-host.example`.
+    - Android: add `naraGaidenServerUrl=...` to `android/local.properties` or start from `android/local.properties.example`.
+    - Both local config files stay out of Git.
+   If `NARA_PASSWORD` is set, the Android and iOS apps will ask for the password on first `401` and reuse it afterward.
+10. Build/install the Android, Wear OS, and/or iOS apps as desired:
+    - iOS setup details: `ios/README.md`
+    - Android + Wear OS setup details: `android/README.md`
 
 ## Technical Overview
 

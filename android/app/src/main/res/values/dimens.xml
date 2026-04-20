@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="widget_divider_thickness">1dp</dimen>
+    <dimen name="app_preview_row_divider_margin">8dp</dimen>
+</resources>

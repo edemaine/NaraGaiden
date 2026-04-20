@@ -1,0 +1,5 @@
+// Shared defaults for local mobile server configuration.
+NARAGAIDEN_SERVER_URL = http:/$()/192.168.2.1:8888
+
+// Optional local overrides live in Local.xcconfig, which is ignored by git.
+#include? "Local.xcconfig"

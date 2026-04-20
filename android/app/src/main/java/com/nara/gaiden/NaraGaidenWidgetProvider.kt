@@ -65,7 +65,7 @@ class NaraGaidenWidgetProvider : AppWidgetProvider() {
         Thread {
             try {
                 val state = try {
-                    val result = NaraGaidenApi.fetch()
+                    val result = NaraGaidenApi.fetch(context.applicationContext)
                     val successMs = System.currentTimeMillis()
                     prefs.edit {
                         putString(NaraGaidenStore.KEY_JSON, result.json)

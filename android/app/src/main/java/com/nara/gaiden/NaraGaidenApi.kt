@@ -1,5 +1,6 @@
 package com.nara.gaiden
 
+import android.content.Context
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -47,16 +48,34 @@ data class NaraGaidenFetchResult(
     val updatedLine: String
 )
 
+class NaraGaidenAuthException(
+    val rejected: Boolean,
+    message: String
+) : IOException(message)
+
 object NaraGaidenApi {
-    fun fetch(): NaraGaidenFetchResult {
+    private const val PASSWORD_HEADER = "X-NaraGaiden-Password"
+
+    fun fetch(context: Context): NaraGaidenFetchResult {
+        val password = NaraGaidenPasswordStore.get(context)
         val url = URL(NaraGaidenConfig.jsonUrl)
         val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = 15000
         connection.readTimeout = 15000
         connection.requestMethod = "GET"
         connection.setRequestProperty("Accept", "application/json")
+        if (password != null) {
+            connection.setRequestProperty(PASSWORD_HEADER, password)
+        }
 
         val responseCode = connection.responseCode
+        if (responseCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
+            NaraGaidenPasswordStore.clear(context)
+            throw NaraGaidenAuthException(
+                rejected = password != null,
+                message = if (password != null) "Password rejected" else "Password required"
+            )
+        }
         if (responseCode != 200) {
             throw IOException("HTTP $responseCode")
         }

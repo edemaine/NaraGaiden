@@ -1,10 +1,16 @@
 import Foundation
 
 struct NaraConfig {
-    static let serverURLString = "http://192.168.2.1:8888"
+    private static let defaultServerURLString = "http://192.168.2.1:8888"
+    static let appGroupIdentifier = "group.org.erikdemaine.NaraGaiden"
+
+    static var serverURLString: String {
+        (Bundle.main.object(forInfoDictionaryKey: "NaraGaidenServerURL") as? String)?.nilIfEmpty
+            ?? defaultServerURLString
+    }
 
     static var serverURL: URL {
-        URL(string: serverURLString) ?? URL(string: "http://192.168.2.1:8888")!
+        URL(string: serverURLString) ?? URL(string: defaultServerURLString)!
     }
 
     static var jsonURL: URL {
@@ -13,6 +19,51 @@ struct NaraConfig {
 
     static var plotURL: URL {
         serverURL.appendingPathComponent("plot")
+    }
+}
+
+enum NaraSharedStore {
+    static var defaults: UserDefaults {
+        UserDefaults(suiteName: NaraConfig.appGroupIdentifier) ?? .standard
+    }
+}
+
+enum NaraPasswordStore {
+    private static let key = "server_password"
+
+    static func load() -> String? {
+        NaraSharedStore.defaults.string(forKey: key)?.nilIfEmpty
+    }
+
+    static func save(_ password: String) {
+        NaraSharedStore.defaults.set(password, forKey: key)
+    }
+
+    static func clear() {
+        NaraSharedStore.defaults.removeObject(forKey: key)
+    }
+}
+
+enum NaraAPIError: LocalizedError, Equatable {
+    case passwordRequired
+    case passwordRejected
+    case badStatus(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .passwordRequired:
+            return "Password required"
+        case .passwordRejected:
+            return "Password rejected"
+        case let .badStatus(statusCode):
+            return "HTTP \(statusCode)"
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 
@@ -152,12 +203,22 @@ struct NaraEvent: Codable {
 
 enum NaraAPI {
     static func fetch() async throws -> NaraPayload {
+        let password = NaraPasswordStore.load()
         var request = URLRequest(url: NaraConfig.jsonURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 15
+        if let password {
+            request.setValue(password, forHTTPHeaderField: "X-NaraGaiden-Password")
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw URLError(.badServerResponse)
+        if let http = response as? HTTPURLResponse {
+            if http.statusCode == 401 {
+                NaraPasswordStore.clear()
+                throw password == nil ? NaraAPIError.passwordRequired : NaraAPIError.passwordRejected
+            }
+            if http.statusCode != 200 {
+                throw NaraAPIError.badStatus(http.statusCode)
+            }
         }
         return try JSONDecoder().decode(NaraPayload.self, from: data)
     }

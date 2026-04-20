@@ -1,0 +1,3 @@
+// Copy to ios/Config/Local.xcconfig and edit locally.
+// Use /$()/ in place of // because .xcconfig treats // as a comment.
+NARAGAIDEN_SERVER_URL = https:/$()/example.com

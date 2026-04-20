@@ -1,3 +1,5 @@
+Config/Local.xcconfig
+
 # Xcode
 build/
 DerivedData/

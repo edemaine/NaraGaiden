@@ -1,10 +1,13 @@
 package com.nara.gaiden
 
+import android.app.AlertDialog
 import android.content.Intent
+import android.text.InputType
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +24,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var previewStatus: TextView
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val refreshInFlight = AtomicBoolean(false)
+    private var passwordPromptVisible = false
+    private var refreshAfterPasswordPrompt = false
+    @Volatile private var refreshQueued = false
     private val refreshRunnable = object : Runnable {
         override fun run() {
             refreshData()
@@ -46,6 +52,11 @@ class MainActivity : AppCompatActivity() {
         val refreshButton = findViewById<Button>(R.id.refresh_button)
         refreshButton.setOnClickListener {
             refreshData()
+        }
+
+        val passwordButton = findViewById<Button>(R.id.password_button)
+        passwordButton.setOnClickListener {
+            showPasswordPrompt(rejected = false)
         }
 
         val openButton = findViewById<Button>(R.id.open_nara_button)
@@ -91,12 +102,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshData() {
         if (!refreshInFlight.compareAndSet(false, true)) {
+            refreshQueued = true
             return
         }
         previewStatus.text = "Loading..."
         Thread {
             try {
-                val result = NaraGaidenApi.fetch()
+                val result = NaraGaidenApi.fetch(applicationContext)
                 val rows = NaraGaidenContent.parseRows(result.json)
                 val successMs = System.currentTimeMillis()
                 val prefs = getSharedPreferences(NaraGaidenStore.PREFS_NAME, MODE_PRIVATE)
@@ -113,7 +125,23 @@ class MainActivity : AppCompatActivity() {
                 }
                 notifyWidgetFromCache()
                 NaraGaidenWearBridge.syncCachedSnapshot(applicationContext)
+            } catch (e: NaraGaidenAuthException) {
+                if (refreshQueued) {
+                    return@Thread
+                }
+                val prefs = getSharedPreferences(NaraGaidenStore.PREFS_NAME, MODE_PRIVATE)
+                val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null) ?: "as of --"
+                val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
+                prefs.edit { putBoolean(NaraGaidenStore.KEY_LAST_ERROR, true) }
+                runOnUiThread {
+                    previewUpdated.text = NaraGaidenFormat.withStaleSuffix(fallbackUpdated, lastSuccessMs, include = true)
+                    previewStatus.text = e.message ?: "Password required"
+                    showPasswordPrompt(rejected = e.rejected)
+                }
             } catch (e: Exception) {
+                if (refreshQueued) {
+                    return@Thread
+                }
                 val prefs = getSharedPreferences(NaraGaidenStore.PREFS_NAME, MODE_PRIVATE)
                 val fallbackUpdated = prefs.getString(NaraGaidenStore.KEY_UPDATED, null) ?: "as of --"
                 val lastSuccessMs = prefs.getLong(NaraGaidenStore.KEY_LAST_SUCCESS_MS, 0L)
@@ -124,8 +152,56 @@ class MainActivity : AppCompatActivity() {
                 }
             } finally {
                 refreshInFlight.set(false)
+                if (refreshQueued) {
+                    refreshQueued = false
+                    runOnUiThread {
+                        refreshData()
+                    }
+                }
             }
         }.start()
+    }
+
+    private fun showPasswordPrompt(rejected: Boolean) {
+        if (passwordPromptVisible) {
+            return
+        }
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            hint = getString(R.string.password_hint)
+            setText(if (rejected) "" else NaraGaidenPasswordStore.get(this@MainActivity).orEmpty())
+            setSelection(text?.length ?: 0)
+        }
+        passwordPromptVisible = true
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.password_title)
+            .setMessage(
+                if (rejected) {
+                    getString(R.string.password_rejected_message)
+                } else {
+                    getString(R.string.password_required_message)
+                }
+            )
+            .setView(input)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setOnDismissListener {
+                passwordPromptVisible = false
+                if (refreshAfterPasswordPrompt) {
+                    refreshAfterPasswordPrompt = false
+                    refreshData()
+                }
+            }
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val password = input.text?.toString().orEmpty()
+                NaraGaidenPasswordStore.save(this, password)
+                refreshAfterPasswordPrompt = true
+                dialog.dismiss()
+            }
+        }
+        dialog.setButton(AlertDialog.BUTTON_POSITIVE, getString(R.string.password_save)) { _, _ -> }
+        dialog.show()
     }
 
     private fun notifyWidgetFromCache() {

@@ -2,12 +2,14 @@
 
 import argparse
 from datetime import date, timedelta
+import hashlib
 import html
 import json
 import logging
 import os
 import time
 from typing import Any, Dict, Optional, cast
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -39,6 +41,227 @@ body {
 POOP_ALERT_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000
 ALERT_ICON_HTML = "&#9888;&#65039;"
 DIAPER_PLOT_MODES = ("all", "dirty", "wet", "dry")
+ENV_FILE_NAME = ".env"
+AUTH_HEADER = "X-NaraGaiden-Password"
+AUTH_COOKIE = "naragaiden_auth"
+AUTH_STORAGE_KEY = "naragaiden_password"
+AUTH_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
+
+
+def load_env_file(file_path: Path):
+    if not file_path.exists():
+        return
+    for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+def password_digest(password):
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def request_cookie(handler, name):
+    cookie_header = handler.headers.get("Cookie")
+    if not cookie_header:
+        return None
+    cookie = SimpleCookie()
+    try:
+        cookie.load(cookie_header)
+    except Exception:
+        return None
+    morsel = cookie.get(name)
+    if morsel is None:
+        return None
+    return morsel.value
+
+
+def request_is_authorized(handler):
+    server = cast(NaraServer, handler.server)
+    expected = getattr(server, "password_hash", None)
+    if not expected:
+        return True
+
+    provided_password = handler.headers.get(AUTH_HEADER)
+    if provided_password is not None and password_digest(provided_password) == expected:
+        return True
+
+    return request_cookie(handler, AUTH_COOKIE) == expected
+
+
+def auth_cookie_header(password_hash):
+    return (
+        f"{AUTH_COOKIE}={password_hash}; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE}; "
+        "HttpOnly; SameSite=Lax"
+    )
+
+
+def cleared_auth_cookie_header():
+    return f"{AUTH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
+
+def build_auth_html(current_path):
+    css = "\n".join(
+        [
+            GLOBAL_CSS,
+            """
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.auth-card {
+  width: min(420px, 100%);
+  background: #171717;
+  border: 1px solid #2d2d2d;
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+}
+.auth-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+}
+.auth-copy {
+  margin: 0 0 16px;
+  color: #c8c8c8;
+  line-height: 1.45;
+}
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+.auth-input {
+  width: 100%;
+  border: 1px solid #3d3d3d;
+  border-radius: 12px;
+  background: #0f0f0f;
+  color: #f2f2f2;
+  padding: 12px 14px;
+  font: inherit;
+}
+.auth-button {
+  border: 0;
+  border-radius: 12px;
+  background: #c98a2b;
+  color: #111111;
+  padding: 12px 14px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.auth-button[disabled] {
+  opacity: 0.7;
+  cursor: wait;
+}
+.auth-status {
+  min-height: 1.2em;
+  color: #f2a7a7;
+}
+.auth-status.pending {
+  color: #d7c78a;
+}
+""".strip(),
+        ]
+    )
+    script = f"""
+    const storageKey = {json.dumps(AUTH_STORAGE_KEY)};
+    const returnPath = {json.dumps(current_path)};
+    const form = document.querySelector(".auth-form");
+    const input = document.querySelector(".auth-input");
+    const status = document.querySelector(".auth-status");
+    const button = document.querySelector(".auth-button");
+
+    function setStatus(message = "", pending = false) {{
+      status.textContent = message;
+      status.className = pending ? "auth-status pending" : "auth-status";
+    }}
+
+    async function authenticate(password, shouldStore) {{
+      button.disabled = true;
+      setStatus("Checking password...", true);
+      try {{
+        const response = await fetch("/auth", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }},
+          body: new URLSearchParams({{ password }}),
+          cache: "no-store",
+        }});
+        if (!response.ok) {{
+          localStorage.removeItem(storageKey);
+          setStatus("Password not accepted.");
+          input.focus();
+          input.select();
+          return false;
+        }}
+        if (shouldStore) {{
+          localStorage.setItem(storageKey, password);
+        }}
+        window.location.replace(returnPath);
+        return true;
+      }} catch (_err) {{
+        setStatus("Could not reach the server.");
+        return false;
+      }} finally {{
+        button.disabled = false;
+      }}
+    }}
+
+    form.addEventListener("submit", async (event) => {{
+      event.preventDefault();
+      const password = input.value;
+      if (!password) {{
+        setStatus("Enter the password.");
+        input.focus();
+        return;
+      }}
+      await authenticate(password, true);
+    }});
+
+    const savedPassword = localStorage.getItem(storageKey);
+    if (savedPassword) {{
+      input.value = savedPassword;
+      authenticate(savedPassword, true);
+    }} else {{
+      input.focus();
+    }}
+    """.strip()
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>Nara Login</title>
+  <style>
+    {css}
+  </style>
+</head>
+<body>
+  <main class=\"auth-card\">
+    <h1 class=\"auth-title\">Nara Gaiden</h1>
+    <p class=\"auth-copy\">Enter the server password to view baby data on this device.</p>
+    <form class=\"auth-form\">
+      <input class=\"auth-input\" type=\"password\" name=\"password\" autocomplete=\"current-password\" placeholder=\"Server password\" />
+      <button class=\"auth-button\" type=\"submit\">Unlock</button>
+      <div class=\"auth-status\" aria-live=\"polite\"></div>
+    </form>
+  </main>
+  <script>
+    {script}
+  </script>
+</body>
+</html>
+"""
 
 
 def format_relative(ms, now_ms=None):
@@ -660,6 +883,10 @@ def build_html(
         const url = new URL(window.location.href);
         url.searchParams.set("_", Date.now().toString());
         const response = await fetch(url, { cache: "no-store" });
+        if (response.status === 401) {
+          window.location.reload();
+          return;
+        }
         if (!response.ok) {
           staleActive = true;
           updateStaleNote();
@@ -2857,6 +3084,7 @@ class NaraServer(HTTPServer):
     cache_ttl: float
     cache_data: Optional[Dict[str, Any]]
     cache_time: float
+    password_hash: Optional[str]
 
 
 def fetch_live_data(server):
@@ -2876,6 +3104,56 @@ def fetch_live_data(server):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def send_unauthorized(self, html_page=False):
+        if html_page:
+            body_bytes = build_auth_html(self.path or "/").encode("utf-8")
+            self.send_response(401)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", cleared_auth_cookie_header())
+            self.send_header("Content-Length", str(len(body_bytes)))
+            self.end_headers()
+            self.wfile.write(body_bytes)
+            return
+
+        body_bytes = b"Unauthorized"
+        self.send_response(401)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Set-Cookie", cleared_auth_cookie_header())
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path != "/auth":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        server = cast(NaraServer, self.server)
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b""
+        params = parse_qs(raw_body.decode("utf-8", errors="replace"))
+        password = params.get("password", [""])[0]
+
+        if not server.password_hash:
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", cleared_auth_cookie_header())
+            self.end_headers()
+            return
+
+        if password and password_digest(password) == server.password_hash:
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", auth_cookie_header(server.password_hash))
+            self.end_headers()
+            return
+
+        self.send_unauthorized(html_page=False)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/favicon.svg":
@@ -2899,6 +3177,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path not in ("/", "/index.html", "/json", "/plot", "/plot.html"):
             self.send_response(404)
             self.end_headers()
+            return
+        if not request_is_authorized(self):
+            self.send_unauthorized(html_page=parsed.path != "/json")
             return
 
         try:
@@ -2981,6 +3262,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    base_path = Path(__file__).resolve().parent
+    load_env_file(base_path / ENV_FILE_NAME)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--adb-path", dest="adb_path", default=os.environ.get("ADB_PATH", "adb"))
     parser.add_argument(
@@ -2988,9 +3272,11 @@ def main():
         dest="adb_device",
         default=os.environ.get("ADB_DEVICE") or os.environ.get("ANDROID_SERIAL"),
     )
-    parser.add_argument("--host", dest="host", default="127.0.0.1")
-    parser.add_argument("--port", dest="port", type=int, default=8787)
+    parser.add_argument("--host", dest="host", default=os.environ.get("NARA_HOST") or "127.0.0.1")
+    parser.add_argument("--port", dest="port", type=int, default=int(os.environ.get("NARA_PORT") or "8787"))
     args = parser.parse_args()
+
+    server_password = os.environ.get("NARA_PASSWORD")
 
     base_dir = Path(__file__).resolve().parent.relative_to(os.getcwd())
     db_dir = base_dir / "nara_device_db"
@@ -3007,6 +3293,7 @@ def main():
     server.cache_ttl = float(os.environ.get("NARA_CACHE_TTL", "10"))
     server.cache_data = None
     server.cache_time = 0.0
+    server.password_hash = password_digest(server_password) if server_password else None
 
     print(f"Serving on http://{args.host}:{args.port}")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
