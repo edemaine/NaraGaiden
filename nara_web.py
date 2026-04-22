@@ -3,10 +3,12 @@
 import argparse
 from datetime import date, timedelta
 import hashlib
+import hmac
 import html
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, Optional, cast
 from http.cookies import SimpleCookie
@@ -46,6 +48,10 @@ AUTH_HEADER = "X-NaraGaiden-Password"
 AUTH_COOKIE = "naragaiden_auth"
 AUTH_STORAGE_KEY = "naragaiden_password"
 AUTH_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
+AUTH_THROTTLE_BASE_SECONDS = 1.0
+AUTH_THROTTLE_MAX_SECONDS = 60.0
+AUTH_THROTTLE_RESET_SECONDS = 15 * 60
+HTML_SAFE_JSON_RE = re.compile(r'[&<>\u2028\u2029]')
 
 
 def load_env_file(file_path: Path):
@@ -69,6 +75,40 @@ def password_digest(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
+def json_dumps_for_html(value):
+    return HTML_SAFE_JSON_RE.sub(
+        lambda match: f"\\u{ord(match.group(0)):04x}",
+        json.dumps(value, separators=(",", ":")),
+    )
+
+
+def password_matches(password, expected_digest):
+    return hmac.compare_digest(password_digest(password), expected_digest)
+
+
+def authenticate_password_attempt(server, client_key, password, context):
+    expected = getattr(server, "password_hash", None)
+    if not expected:
+        return "authorized", 0.0
+
+    wait_seconds = auth_throttle_wait_seconds(server, client_key)
+    if wait_seconds > 0:
+        return "rate_limited", wait_seconds
+
+    if password_matches(password, expected):
+        clear_auth_failures(server, client_key)
+        return "authorized", 0.0
+
+    delay_seconds = register_auth_failure(server, client_key)
+    logging.warning(
+        "Rejected %s from %s; next attempt allowed in %.1fs",
+        context,
+        client_key,
+        delay_seconds,
+    )
+    return "rejected", 0.0
+
+
 def request_cookie(handler, name):
     cookie_header = handler.headers.get("Cookie")
     if not cookie_header:
@@ -84,17 +124,26 @@ def request_cookie(handler, name):
     return morsel.value
 
 
-def request_is_authorized(handler):
+def request_auth_status(handler):
     server = cast(NaraServer, handler.server)
     expected = getattr(server, "password_hash", None)
     if not expected:
-        return True
+        return "authorized", 0.0
 
     provided_password = handler.headers.get(AUTH_HEADER)
-    if provided_password is not None and password_digest(provided_password) == expected:
-        return True
+    if provided_password is not None:
+        return authenticate_password_attempt(
+            server,
+            client_address_text(handler),
+            provided_password,
+            AUTH_HEADER,
+        )
 
-    return request_cookie(handler, AUTH_COOKIE) == expected
+    provided_cookie = request_cookie(handler, AUTH_COOKIE)
+    if provided_cookie is not None and hmac.compare_digest(provided_cookie, expected):
+        return "authorized", 0.0
+
+    return "unauthorized", 0.0
 
 
 def auth_cookie_header(password_hash):
@@ -106,6 +155,81 @@ def auth_cookie_header(password_hash):
 
 def cleared_auth_cookie_header():
     return f"{AUTH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
+
+def client_address_text(handler):
+    client_address = getattr(handler, "client_address", None)
+    if not client_address:
+        return "unknown"
+    host = client_address[0]
+    return str(host or "unknown")
+
+
+def auth_failure_state(server):
+    state = getattr(server, "auth_failures", None)
+    if state is None:
+        state = {}
+        server.auth_failures = state
+    return state
+
+
+def prune_auth_failures(server, now=None):
+    if now is None:
+        now = time.monotonic()
+    state = auth_failure_state(server)
+    expired_before = now - AUTH_THROTTLE_RESET_SECONDS
+    stale_keys = [
+        key
+        for key, entry in state.items()
+        if float(entry.get("blocked_until", 0.0)) <= now
+        and float(entry.get("last_failure", 0.0)) < expired_before
+    ]
+    for key in stale_keys:
+        state.pop(key, None)
+
+
+def auth_throttle_wait_seconds(server, client_key, now=None):
+    if now is None:
+        now = time.monotonic()
+    prune_auth_failures(server, now)
+    entry = auth_failure_state(server).get(client_key)
+    if not entry:
+        return 0.0
+    blocked_until = float(entry.get("blocked_until", 0.0))
+    return max(0.0, blocked_until - now)
+
+
+def register_auth_failure(server, client_key, now=None):
+    if now is None:
+        now = time.monotonic()
+    prune_auth_failures(server, now)
+    state = auth_failure_state(server)
+    entry = state.get(client_key)
+    failure_count = 0
+    if entry is not None and (now - float(entry.get("last_failure", now))) <= AUTH_THROTTLE_RESET_SECONDS:
+        failure_count = int(entry.get("count", 0))
+    failure_count += 1
+    delay_seconds = min(
+        AUTH_THROTTLE_BASE_SECONDS * (2 ** max(0, failure_count - 1)),
+        AUTH_THROTTLE_MAX_SECONDS,
+    )
+    state[client_key] = {
+        "count": failure_count,
+        "last_failure": now,
+        "blocked_until": now + delay_seconds,
+    }
+    return delay_seconds
+
+
+def clear_auth_failures(server, client_key):
+    auth_failure_state(server).pop(client_key, None)
+
+
+def format_retry_after_seconds(wait_seconds):
+    wait_int = int(wait_seconds)
+    if wait_seconds > wait_int:
+        wait_int += 1
+    return max(1, wait_int)
 
 
 def build_auth_html(current_path):
@@ -175,8 +299,8 @@ body {
         ]
     )
     script = f"""
-    const storageKey = {json.dumps(AUTH_STORAGE_KEY)};
-    const returnPath = {json.dumps(current_path)};
+    const storageKey = {json_dumps_for_html(AUTH_STORAGE_KEY)};
+    const returnPath = {json_dumps_for_html(current_path)};
     const form = document.querySelector(".auth-form");
     const input = document.querySelector(".auth-input");
     const status = document.querySelector(".auth-status");
@@ -198,6 +322,14 @@ body {
           cache: "no-store",
         }});
         if (!response.ok) {{
+          if (response.status === 429) {{
+            const message = (await response.text()) || "Too many attempts. Try again shortly.";
+            localStorage.removeItem(storageKey);
+            setStatus(message);
+            input.focus();
+            input.select();
+            return false;
+          }}
           localStorage.removeItem(storageKey);
           setStatus("Password not accepted.");
           input.focus();
@@ -1832,7 +1964,7 @@ def milk_totals_by_day(events, child_map):
 
 def build_plot_html(events, child_map, generated_at):
     chart_data = milk_totals_by_day(events, child_map)
-    chart_data_json = json.dumps(chart_data, separators=(",", ":"))
+    chart_data_json = json_dumps_for_html(chart_data)
     generated = time.strftime("%Y-%m-%d %H:%M", time.localtime(generated_at / 1000))
     default_night_start = int(chart_data.get("defaultNightStart", 20))
     night_start_options = []
@@ -3084,6 +3216,7 @@ class NaraServer(HTTPServer):
     cache_ttl: float
     cache_data: Optional[Dict[str, Any]]
     cache_time: float
+    auth_failures: Dict[str, Dict[str, Any]]
     password_hash: Optional[str]
 
 
@@ -3125,6 +3258,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body_bytes)
 
+    def send_rate_limited(self, wait_seconds):
+        retry_after = format_retry_after_seconds(wait_seconds)
+        body_bytes = (
+            f"Too many login attempts. Try again in {retry_after} second"
+            f"{'s' if retry_after != 1 else ''}."
+        ).encode("utf-8")
+        self.send_response(429)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Retry-After", str(retry_after))
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
     def do_POST(self):
         parsed = urlparse(self.path)
         if parsed.path != "/auth":
@@ -3133,6 +3280,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         server = cast(NaraServer, self.server)
+        client_key = client_address_text(self)
+        wait_seconds = auth_throttle_wait_seconds(server, client_key)
+        if wait_seconds > 0:
+            self.send_rate_limited(wait_seconds)
+            return
+
         content_length = int(self.headers.get("Content-Length", "0") or "0")
         raw_body = self.rfile.read(content_length) if content_length > 0 else b""
         params = parse_qs(raw_body.decode("utf-8", errors="replace"))
@@ -3145,7 +3298,17 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if password and password_digest(password) == server.password_hash:
+        auth_status, wait_seconds = authenticate_password_attempt(
+            server,
+            client_key,
+            password,
+            parsed.path,
+        )
+        if auth_status == "rate_limited":
+            self.send_rate_limited(wait_seconds)
+            return
+
+        if auth_status == "authorized":
             self.send_response(204)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Set-Cookie", auth_cookie_header(server.password_hash))
@@ -3178,7 +3341,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        if not request_is_authorized(self):
+        auth_status, wait_seconds = request_auth_status(self)
+        if auth_status == "rate_limited":
+            self.send_rate_limited(wait_seconds)
+            return
+        if auth_status != "authorized":
             self.send_unauthorized(html_page=parsed.path != "/json")
             return
 
@@ -3293,6 +3460,7 @@ def main():
     server.cache_ttl = float(os.environ.get("NARA_CACHE_TTL", "10"))
     server.cache_data = None
     server.cache_time = 0.0
+    server.auth_failures = {}
     server.password_hash = password_digest(server_password) if server_password else None
 
     print(f"Serving on http://{args.host}:{args.port}")

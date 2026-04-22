@@ -47,6 +47,7 @@ enum NaraPasswordStore {
 enum NaraAPIError: LocalizedError, Equatable {
     case passwordRequired
     case passwordRejected
+    case rateLimited(String)
     case badStatus(Int)
 
     var errorDescription: String? {
@@ -55,6 +56,8 @@ enum NaraAPIError: LocalizedError, Equatable {
             return "Password required"
         case .passwordRejected:
             return "Password rejected"
+        case let .rateLimited(message):
+            return message
         case let .badStatus(statusCode):
             return "HTTP \(statusCode)"
         }
@@ -216,10 +219,26 @@ enum NaraAPI {
                 NaraPasswordStore.clear()
                 throw password == nil ? NaraAPIError.passwordRequired : NaraAPIError.passwordRejected
             }
+            if http.statusCode == 429 {
+                throw NaraAPIError.rateLimited(rateLimitedMessage(data: data, response: http))
+            }
             if http.statusCode != 200 {
                 throw NaraAPIError.badStatus(http.statusCode)
             }
         }
         return try JSONDecoder().decode(NaraPayload.self, from: data)
+    }
+
+    private static func rateLimitedMessage(data: Data, response: HTTPURLResponse) -> String {
+        if let bodyText = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !bodyText.isEmpty {
+            return bodyText
+        }
+        if let retryAfterText = response.value(forHTTPHeaderField: "Retry-After"),
+           let retryAfter = Int(retryAfterText),
+           retryAfter > 0 {
+            return "Too many login attempts. Try again in \(retryAfter) second\(retryAfter == 1 ? "" : "s")."
+        }
+        return "Too many login attempts. Try again shortly."
     }
 }

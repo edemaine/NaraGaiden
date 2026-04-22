@@ -53,6 +53,10 @@ class NaraGaidenAuthException(
     message: String
 ) : IOException(message)
 
+class NaraGaidenRateLimitException(
+    message: String
+) : IOException(message)
+
 object NaraGaidenApi {
     private const val PASSWORD_HEADER = "X-NaraGaiden-Password"
 
@@ -76,6 +80,9 @@ object NaraGaidenApi {
                 message = if (password != null) "Password rejected" else "Password required"
             )
         }
+        if (responseCode == 429) {
+            throw NaraGaidenRateLimitException(rateLimitedMessage(connection))
+        }
         if (responseCode != 200) {
             throw IOException("HTTP $responseCode")
         }
@@ -95,5 +102,18 @@ object NaraGaidenApi {
         }
         val formatted = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(generatedAt))
         return "as of $formatted"
+    }
+
+    private fun rateLimitedMessage(connection: HttpURLConnection): String {
+        val bodyText = connection.errorStream?.bufferedReader()?.use { it.readText().trim() }
+        if (!bodyText.isNullOrEmpty()) {
+            return bodyText
+        }
+        val retryAfter = connection.getHeaderField("Retry-After")?.toIntOrNull()
+        if (retryAfter != null && retryAfter > 0) {
+            val suffix = if (retryAfter == 1) "" else "s"
+            return "Too many login attempts. Try again in $retryAfter second$suffix."
+        }
+        return "Too many login attempts. Try again shortly."
     }
 }
