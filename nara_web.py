@@ -2330,7 +2330,13 @@ def build_plot_html(events, child_map, generated_at):
     }}
 
     function isRecordHighlightMode(plotMode) {{
-      return plotMode === "milk-max-feed" || plotMode === "gap-max";
+      return (
+        plotMode === "milk-daily" ||
+        plotMode === "milk-average-feed" ||
+        plotMode === "milk-max-feed" ||
+        plotMode === "gap-avg" ||
+        plotMode === "gap-max"
+      );
     }}
 
     function buildPointStyle(plotMode, values, accentColor, diaperMeta) {{
