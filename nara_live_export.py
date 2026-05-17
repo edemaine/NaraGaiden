@@ -9,25 +9,74 @@ from pathlib import Path
 
 REMOTE_NARA_DB = "/data/data/com.naraorganics.nara/no_backup/NaraSqlite/nara.db"
 REMOTE_FIREBASE_DB = "/data/data/com.naraorganics.nara/databases/amazing-ripple-221320.firebaseio.com_default"
+DEFAULT_ADB_TIMEOUT_SECONDS = 10.0
 
 
-def run(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True)
+class CommandTimeoutError(RuntimeError):
+    pass
+
+
+def command_text(cmd):
+    return " ".join(str(part) for part in cmd)
+
+
+def output_text(value):
+    if not value:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
+def run(cmd, timeout=None):
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        details = []
+        stdout = output_text(exc.stdout)
+        stderr = output_text(exc.stderr)
+        if stdout:
+            details.append(f"stdout: {stdout}")
+        if stderr:
+            details.append(f"stderr: {stderr}")
+        output = "\n" + "\n".join(details) if details else ""
+        timeout_text = f"{timeout:g}" if timeout is not None else "unknown"
+        raise CommandTimeoutError(
+            f"Command timed out after {timeout_text}s: {command_text(cmd)}{output}"
+        ) from exc
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "command failed")
+        output = result.stderr.strip() or result.stdout.strip() or "command failed"
+        raise RuntimeError(
+            f"Command failed with exit code {result.returncode}: {command_text(cmd)}\n{output}"
+        )
     return result.stdout
 
 
-def adb_pull(adb_path, remote, local, adb_device=None, retries=2, retry_delay=0.5):
+def adb_timeout_seconds():
+    value = os.environ.get("NARA_ADB_TIMEOUT") or str(DEFAULT_ADB_TIMEOUT_SECONDS)
+    try:
+        timeout = float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid NARA_ADB_TIMEOUT value: {value!r}") from exc
+    if timeout <= 0:
+        raise RuntimeError(f"NARA_ADB_TIMEOUT must be positive: {value!r}")
+    return timeout
+
+
+def adb_pull(adb_path, remote, local, adb_device=None, retries=2, retry_delay=0.5, timeout=None):
     cmd = [adb_path]
     if adb_device:
         cmd.extend(["-s", adb_device])
     cmd.extend(["pull", remote, str(local)])
+    if timeout is None:
+        timeout = adb_timeout_seconds()
 
     last_exc = None
     for attempt in range(retries + 1):
         try:
-            return run(cmd)
+            return run(cmd, timeout=timeout)
+        except CommandTimeoutError:
+            raise
         except RuntimeError as exc:
             last_exc = exc
             if attempt >= retries:
