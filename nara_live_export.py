@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -63,25 +64,64 @@ def adb_timeout_seconds():
     return timeout
 
 
-def adb_pull(adb_path, remote, local, adb_device=None, retries=2, retry_delay=0.5, timeout=None):
+def adb_command(adb_path, adb_device, *args):
     cmd = [adb_path]
     if adb_device:
         cmd.extend(["-s", adb_device])
-    cmd.extend(["pull", remote, str(local)])
+    cmd.extend(args)
+    return cmd
+
+
+def permission_denied_error(exc):
+    return "Permission denied" in str(exc)
+
+
+def adb_root(adb_path, adb_device=None, timeout=None):
+    if timeout is None:
+        timeout = adb_timeout_seconds()
+    logging.info("Running adb root for %s", adb_device or "default device")
+    run(adb_command(adb_path, adb_device, "root"), timeout=timeout)
+    run(adb_command(adb_path, adb_device, "wait-for-device"), timeout=timeout)
+    time.sleep(0.5)
+    logging.info("ADB root completed for %s", adb_device or "default device")
+
+
+def adb_pull(adb_path, remote, local, adb_device=None, retries=2, retry_delay=0.5, timeout=None):
+    cmd = adb_command(adb_path, adb_device, "pull", remote, str(local))
     if timeout is None:
         timeout = adb_timeout_seconds()
 
     last_exc = None
-    for attempt in range(retries + 1):
+    root_attempted = False
+    attempt = 0
+    while attempt <= retries:
         try:
             return run(cmd, timeout=timeout)
         except CommandTimeoutError:
             raise
         except RuntimeError as exc:
             last_exc = exc
+            if not root_attempted and permission_denied_error(exc):
+                root_attempted = True
+                logging.warning(
+                    "ADB pull got permission denied for %s; running adb root and retrying",
+                    remote,
+                )
+                try:
+                    adb_root(adb_path, adb_device, timeout=timeout)
+                except CommandTimeoutError:
+                    raise
+                except RuntimeError as root_exc:
+                    raise RuntimeError(
+                        "ADB pull failed with permission denied, and adb root failed.\n"
+                        f"Pull error: {exc}\n"
+                        f"Root error: {root_exc}"
+                    ) from root_exc
+                continue
             if attempt >= retries:
                 break
             time.sleep(retry_delay * (attempt + 1))
+            attempt += 1
     if last_exc is not None:
         raise last_exc
 

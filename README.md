@@ -70,6 +70,8 @@ to get a window with no location bar or other chrome.
     - `python nara_web.py --host 0.0.0.0 --port 8888 --adb-device emulator-5554`
     - (`--adb-device` should match whatever `adb devices` lists)
     - Settings can also be set via environment variables or a local `.env` file.
+    - If pulling the app database fails with `Permission denied`,
+      the server runs `adb root`, as needed to pull the Nara database.
 8. Connect web browser to `localhost:8888` (or modify to your IP address)
     for the web view.
    If `NARA_PASSWORD` is set, browsers will prompt for the password once and remember it locally.
