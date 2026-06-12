@@ -1254,6 +1254,112 @@ def is_night_hour(hour, night_start_hour):
     return hour >= night_start_hour or hour < night_end_hour
 
 
+def _rounded_plot_float(value, decimals=12):
+    return round(float(value), decimals)
+
+
+def _plot_gap_hourly_by_day(labels, gap_stats_by_day_hour):
+    hourly = {}
+    for day_key in labels:
+        day_payload = {}
+        for hour, stat in sorted((gap_stats_by_day_hour.get(day_key) or {}).items()):
+            gap_count = int(stat.get("count", 0))
+            if gap_count <= 0:
+                continue
+            day_payload[str(hour)] = {
+                "gapSum": _rounded_plot_float(stat.get("sum", 0.0)),
+                "gapCount": gap_count,
+                "maxGap": _rounded_plot_float(stat.get("max", 0.0)),
+                "maxGapDisplay": round(float(stat.get("max", 0.0)), 2),
+                "maxGapPeriod": _format_gap_period(stat.get("maxStart"), stat.get("maxEnd")),
+            }
+        if day_payload:
+            hourly[day_key] = day_payload
+    return hourly
+
+
+def _plot_diaper_hourly_payload(mode_stats):
+    diaper_payload = {}
+    for mode in DIAPER_PLOT_MODES:
+        stat = (mode_stats or {}).get(mode)
+        if not stat or int(stat.get("count", 0)) <= 0:
+            continue
+        diaper_payload[mode] = diaper_plot_meta(stat)
+    return diaper_payload
+
+
+def _plot_child_hourly_by_day(
+    labels,
+    day_hour_totals,
+    breast_day_hour_totals,
+    formula_day_hour_totals,
+    day_hour_feed_counts,
+    day_hour_max_feeds,
+    diaper_day_hour_stats,
+    child_gap_hour_stats,
+):
+    hourly = {}
+    for day_key in labels:
+        hour_keys = set()
+        hour_sources = (
+            day_hour_totals,
+            breast_day_hour_totals,
+            formula_day_hour_totals,
+            day_hour_feed_counts,
+            day_hour_max_feeds,
+            diaper_day_hour_stats,
+            child_gap_hour_stats,
+        )
+        for source in hour_sources:
+            hour_keys.update((source.get(day_key) or {}).keys())
+
+        day_payload = {}
+        for hour in sorted(hour_keys):
+            hour_payload = {}
+            daily = (day_hour_totals.get(day_key) or {}).get(hour, 0.0)
+            if daily:
+                hour_payload["daily"] = _rounded_plot_float(daily)
+
+            breast_daily = (breast_day_hour_totals.get(day_key) or {}).get(hour, 0.0)
+            if breast_daily:
+                hour_payload["breastDaily"] = _rounded_plot_float(breast_daily)
+
+            formula_daily = (formula_day_hour_totals.get(day_key) or {}).get(hour, 0.0)
+            if formula_daily:
+                hour_payload["formulaDaily"] = _rounded_plot_float(formula_daily)
+
+            feed_count = int((day_hour_feed_counts.get(day_key) or {}).get(hour, 0))
+            if feed_count:
+                hour_payload["feedCount"] = feed_count
+
+            max_feed = (day_hour_max_feeds.get(day_key) or {}).get(hour)
+            if max_feed is not None:
+                hour_payload["maxMilkPerFeed"] = _rounded_plot_float(max_feed)
+
+            diaper_payload = _plot_diaper_hourly_payload(
+                (diaper_day_hour_stats.get(day_key) or {}).get(hour)
+            )
+            if diaper_payload:
+                hour_payload["diaper"] = diaper_payload
+
+            gap_stat = (child_gap_hour_stats.get(day_key) or {}).get(hour)
+            if gap_stat and int(gap_stat.get("count", 0)) > 0:
+                hour_payload["gapSum"] = _rounded_plot_float(gap_stat.get("sum", 0.0))
+                hour_payload["gapCount"] = int(gap_stat.get("count", 0))
+                hour_payload["maxGap"] = _rounded_plot_float(gap_stat.get("max", 0.0))
+                hour_payload["maxGapDisplay"] = round(float(gap_stat.get("max", 0.0)), 2)
+                hour_payload["maxGapPeriod"] = _format_gap_period(
+                    gap_stat.get("maxStart"), gap_stat.get("maxEnd")
+                )
+
+            if hour_payload:
+                day_payload[str(hour)] = hour_payload
+
+        if day_payload:
+            hourly[day_key] = day_payload
+    return hourly
+
+
 def milk_totals_by_day(events, child_map):
     by_child_day = {}
     by_child_day_hour = {}
@@ -1466,87 +1572,7 @@ def milk_totals_by_day(events, child_map):
     if all_babies_avg_gap_display is None:
         all_babies_avg_gap_display = [None] * len(labels)
 
-    all_babies_split = {}
-    for night_start_hour in range(24):
-        day_gap_max_points = []
-        day_gap_max_periods = []
-        day_gap_avg_points = []
-        night_gap_max_points = []
-        night_gap_max_periods = []
-        night_gap_avg_points = []
-        for day_key in labels:
-            gap_hour_stats = gap_stats_all_day_hour.get(day_key, {})
-            day_gap_sum = 0.0
-            day_gap_count = 0
-            day_gap_max = None
-            day_gap_period = None
-            night_gap_sum = 0.0
-            night_gap_count = 0
-            night_gap_max = None
-            night_gap_period = None
-            for hour, stat in gap_hour_stats.items():
-                gap_sum = float(stat.get("sum", 0.0))
-                gap_count = int(stat.get("count", 0))
-                gap_max = float(stat.get("max", 0.0))
-                if gap_count <= 0:
-                    continue
-                if is_night_hour(hour, night_start_hour):
-                    night_gap_sum += gap_sum
-                    night_gap_count += gap_count
-                    if night_gap_max is None or gap_max > night_gap_max:
-                        night_gap_max = gap_max
-                        night_gap_period = _format_gap_period(
-                            stat.get("maxStart"), stat.get("maxEnd")
-                        )
-                else:
-                    day_gap_sum += gap_sum
-                    day_gap_count += gap_count
-                    if day_gap_max is None or gap_max > day_gap_max:
-                        day_gap_max = gap_max
-                        day_gap_period = _format_gap_period(
-                            stat.get("maxStart"), stat.get("maxEnd")
-                        )
-
-            day_gap_max_points.append(day_gap_max)
-            day_gap_max_periods.append(day_gap_period)
-            day_gap_avg_points.append(day_gap_sum / day_gap_count if day_gap_count > 0 else None)
-            night_gap_max_points.append(night_gap_max)
-            night_gap_max_periods.append(night_gap_period)
-            night_gap_avg_points.append(night_gap_sum / night_gap_count if night_gap_count > 0 else None)
-
-        day_gap_max_display = _trim_optional_series(day_gap_max_points, decimals=2)
-        day_gap_avg_display = _trim_optional_series(day_gap_avg_points, decimals=2)
-        night_gap_max_display = _trim_optional_series(night_gap_max_points, decimals=2)
-        night_gap_avg_display = _trim_optional_series(night_gap_avg_points, decimals=2)
-        day_gap_max_period_display = _mask_series_with_numeric(day_gap_max_periods, day_gap_max_display)
-        night_gap_max_period_display = _mask_series_with_numeric(
-            night_gap_max_periods, night_gap_max_display
-        )
-        if day_gap_max_display is None:
-            day_gap_max_display = [None] * len(labels)
-        if day_gap_max_period_display is None:
-            day_gap_max_period_display = [None] * len(labels)
-        if day_gap_avg_display is None:
-            day_gap_avg_display = [None] * len(labels)
-        if night_gap_max_display is None:
-            night_gap_max_display = [None] * len(labels)
-        if night_gap_max_period_display is None:
-            night_gap_max_period_display = [None] * len(labels)
-        if night_gap_avg_display is None:
-            night_gap_avg_display = [None] * len(labels)
-
-        all_babies_split[str(night_start_hour)] = {
-            "day": {
-                "maxGap": day_gap_max_display,
-                "maxGapPeriod": day_gap_max_period_display,
-                "avgGap": day_gap_avg_display,
-            },
-            "night": {
-                "maxGap": night_gap_max_display,
-                "maxGapPeriod": night_gap_max_period_display,
-                "avgGap": night_gap_avg_display,
-            },
-        }
+    all_babies_gap_hourly = _plot_gap_hourly_by_day(labels, gap_stats_all_day_hour)
 
     series = []
     series_child_keys = sorted(
@@ -1658,303 +1684,16 @@ def milk_totals_by_day(events, child_map):
             max_milk_per_feed_display = [None] * len(labels)
         if breast_milk_percent_display is None:
             breast_milk_percent_display = [None] * len(labels)
-        split = {}
-        for night_start_hour in range(24):
-            day_daily_points = []
-            day_breast_daily_points = []
-            day_formula_daily_points = []
-            day_cumulative_points = []
-            day_running_total = 0.0
-            night_daily_points = []
-            night_breast_daily_points = []
-            night_formula_daily_points = []
-            night_cumulative_points = []
-            night_running_total = 0.0
-            day_avg_milk_per_feed_points = []
-            night_avg_milk_per_feed_points = []
-            day_max_milk_per_feed_points = []
-            night_max_milk_per_feed_points = []
-            day_breast_milk_percent_points = []
-            night_breast_milk_percent_points = []
-            day_diaper_points_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
-            night_diaper_points_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
-            day_diaper_meta_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
-            night_diaper_meta_by_mode = {mode: [] for mode in DIAPER_PLOT_MODES}
-            day_gap_max_points = []
-            day_gap_max_periods = []
-            day_gap_avg_points = []
-            night_gap_max_points = []
-            night_gap_max_periods = []
-            night_gap_avg_points = []
-            for day_key in labels:
-                hour_totals = day_hour_totals.get(day_key, {})
-                day_value = 0.0
-                night_value = 0.0
-                for hour, amount in hour_totals.items():
-                    if is_night_hour(hour, night_start_hour):
-                        night_value += amount
-                    else:
-                        day_value += amount
-
-                hour_feed_counts = day_hour_feed_counts.get(day_key, {})
-                hour_max_feeds = day_hour_max_feeds.get(day_key, {})
-                breast_hour_totals = breast_day_hour_totals.get(day_key, {})
-                formula_hour_totals = formula_day_hour_totals.get(day_key, {})
-                day_feed_count = 0
-                night_feed_count = 0
-                day_max_feed = None
-                night_max_feed = None
-                day_breast_value = 0.0
-                night_breast_value = 0.0
-                day_formula_value = 0.0
-                night_formula_value = 0.0
-                for hour, count in hour_feed_counts.items():
-                    if is_night_hour(hour, night_start_hour):
-                        night_feed_count += count
-                    else:
-                        day_feed_count += count
-
-                for hour, max_feed in hour_max_feeds.items():
-                    if is_night_hour(hour, night_start_hour):
-                        if night_max_feed is None or max_feed > night_max_feed:
-                            night_max_feed = max_feed
-                    else:
-                        if day_max_feed is None or max_feed > day_max_feed:
-                            day_max_feed = max_feed
-
-                for hour, amount in breast_hour_totals.items():
-                    if is_night_hour(hour, night_start_hour):
-                        night_breast_value += amount
-                    else:
-                        day_breast_value += amount
-
-                for hour, amount in formula_hour_totals.items():
-                    if is_night_hour(hour, night_start_hour):
-                        night_formula_value += amount
-                    else:
-                        day_formula_value += amount
-
-                day_running_total += day_value
-                day_daily_points.append(day_value)
-                day_breast_daily_points.append(day_breast_value)
-                day_formula_daily_points.append(day_formula_value)
-                day_cumulative_points.append(day_running_total)
-                day_avg_milk_per_feed_points.append(
-                    day_value / day_feed_count if day_feed_count > 0 else None
-                )
-                day_max_milk_per_feed_points.append(day_max_feed)
-                day_mix_total = day_breast_value + day_formula_value
-                day_breast_milk_percent_points.append(
-                    (day_breast_value * 100.0 / day_mix_total) if day_mix_total > 0 else None
-                )
-                night_running_total += night_value
-                night_daily_points.append(night_value)
-                night_breast_daily_points.append(night_breast_value)
-                night_formula_daily_points.append(night_formula_value)
-                night_cumulative_points.append(night_running_total)
-                night_avg_milk_per_feed_points.append(
-                    night_value / night_feed_count if night_feed_count > 0 else None
-                )
-                night_max_milk_per_feed_points.append(night_max_feed)
-                night_mix_total = night_breast_value + night_formula_value
-                night_breast_milk_percent_points.append(
-                    (night_breast_value * 100.0 / night_mix_total) if night_mix_total > 0 else None
-                )
-
-                diaper_hour_mode_stats = diaper_day_hour_stats.get(day_key, {})
-                day_diaper_stats_for_day = []
-                night_diaper_stats_for_day = []
-                for hour, hour_stats in diaper_hour_mode_stats.items():
-                    if is_night_hour(hour, night_start_hour):
-                        night_diaper_stats_for_day.append(hour_stats)
-                    else:
-                        day_diaper_stats_for_day.append(hour_stats)
-                day_diaper_summary = combine_diaper_plot_stats(day_diaper_stats_for_day)
-                night_diaper_summary = combine_diaper_plot_stats(night_diaper_stats_for_day)
-                for mode in DIAPER_PLOT_MODES:
-                    day_diaper_points_by_mode[mode].append(day_diaper_summary[mode]["count"])
-                    night_diaper_points_by_mode[mode].append(night_diaper_summary[mode]["count"])
-                    day_diaper_meta_by_mode[mode].append(diaper_plot_meta(day_diaper_summary[mode]))
-                    night_diaper_meta_by_mode[mode].append(diaper_plot_meta(night_diaper_summary[mode]))
-
-                gap_hour_stats = child_gap_hour_stats.get(day_key, {})
-                day_gap_sum = 0.0
-                day_gap_count = 0
-                day_gap_max = None
-                day_gap_period = None
-                night_gap_sum = 0.0
-                night_gap_count = 0
-                night_gap_max = None
-                night_gap_period = None
-                for hour, stat in gap_hour_stats.items():
-                    gap_sum = float(stat.get("sum", 0.0))
-                    gap_count = int(stat.get("count", 0))
-                    gap_max = float(stat.get("max", 0.0))
-                    if gap_count <= 0:
-                        continue
-                    if is_night_hour(hour, night_start_hour):
-                        night_gap_sum += gap_sum
-                        night_gap_count += gap_count
-                        if night_gap_max is None or gap_max > night_gap_max:
-                            night_gap_max = gap_max
-                            night_gap_period = _format_gap_period(
-                                stat.get("maxStart"), stat.get("maxEnd")
-                            )
-                    else:
-                        day_gap_sum += gap_sum
-                        day_gap_count += gap_count
-                        if day_gap_max is None or gap_max > day_gap_max:
-                            day_gap_max = gap_max
-                            day_gap_period = _format_gap_period(
-                                stat.get("maxStart"), stat.get("maxEnd")
-                            )
-
-                day_gap_max_points.append(day_gap_max)
-                day_gap_max_periods.append(day_gap_period)
-                day_gap_avg_points.append(day_gap_sum / day_gap_count if day_gap_count > 0 else None)
-                night_gap_max_points.append(night_gap_max)
-                night_gap_max_periods.append(night_gap_period)
-                night_gap_avg_points.append(night_gap_sum / night_gap_count if night_gap_count > 0 else None)
-
-            day_daily_display, day_cumulative_display = _trim_milk_series(
-                day_daily_points, day_cumulative_points
-            )
-            night_daily_display, night_cumulative_display = _trim_milk_series(
-                night_daily_points, night_cumulative_points
-            )
-            if day_daily_display is None or day_cumulative_display is None:
-                day_daily_display = [None] * len(labels)
-                day_cumulative_display = [None] * len(labels)
-            if night_daily_display is None or night_cumulative_display is None:
-                night_daily_display = [None] * len(labels)
-                night_cumulative_display = [None] * len(labels)
-            day_breast_daily_display = _trim_count_series(day_breast_daily_points, decimals=1)
-            day_formula_daily_display = _trim_count_series(day_formula_daily_points, decimals=1)
-            night_breast_daily_display = _trim_count_series(night_breast_daily_points, decimals=1)
-            night_formula_daily_display = _trim_count_series(night_formula_daily_points, decimals=1)
-            if day_breast_daily_display is None:
-                day_breast_daily_display = [None] * len(labels)
-            if day_formula_daily_display is None:
-                day_formula_daily_display = [None] * len(labels)
-            if night_breast_daily_display is None:
-                night_breast_daily_display = [None] * len(labels)
-            if night_formula_daily_display is None:
-                night_formula_daily_display = [None] * len(labels)
-
-            day_gap_max_display = _trim_optional_series(day_gap_max_points, decimals=2)
-            day_gap_avg_display = _trim_optional_series(day_gap_avg_points, decimals=2)
-            night_gap_max_display = _trim_optional_series(night_gap_max_points, decimals=2)
-            night_gap_avg_display = _trim_optional_series(night_gap_avg_points, decimals=2)
-            day_avg_milk_per_feed_display = _trim_optional_series(
-                day_avg_milk_per_feed_points, decimals=1
-            )
-            day_max_milk_per_feed_display = _trim_optional_series(
-                day_max_milk_per_feed_points, decimals=1
-            )
-            night_avg_milk_per_feed_display = _trim_optional_series(
-                night_avg_milk_per_feed_points, decimals=1
-            )
-            night_max_milk_per_feed_display = _trim_optional_series(
-                night_max_milk_per_feed_points, decimals=1
-            )
-            day_breast_milk_percent_display = _trim_optional_series(
-                day_breast_milk_percent_points, decimals=1
-            )
-            night_breast_milk_percent_display = _trim_optional_series(
-                night_breast_milk_percent_points, decimals=1
-            )
-            day_gap_max_period_display = _mask_series_with_numeric(day_gap_max_periods, day_gap_max_display)
-            night_gap_max_period_display = _mask_series_with_numeric(
-                night_gap_max_periods, night_gap_max_display
-            )
-            day_diaper_display_by_mode = {}
-            night_diaper_display_by_mode = {}
-            day_diaper_meta_display_by_mode = {}
-            night_diaper_meta_display_by_mode = {}
-            for mode in DIAPER_PLOT_MODES:
-                day_display = _trim_count_series(day_diaper_points_by_mode[mode])
-                if day_display is None:
-                    day_display = [None] * len(labels)
-                day_diaper_display_by_mode[mode] = day_display
-                day_meta_display = _mask_series_with_numeric(day_diaper_meta_by_mode[mode], day_display)
-                if day_meta_display is None:
-                    day_meta_display = [None] * len(labels)
-                day_diaper_meta_display_by_mode[mode] = day_meta_display
-
-                night_display = _trim_count_series(night_diaper_points_by_mode[mode])
-                if night_display is None:
-                    night_display = [None] * len(labels)
-                night_diaper_display_by_mode[mode] = night_display
-                night_meta_display = _mask_series_with_numeric(night_diaper_meta_by_mode[mode], night_display)
-                if night_meta_display is None:
-                    night_meta_display = [None] * len(labels)
-                night_diaper_meta_display_by_mode[mode] = night_meta_display
-            if day_gap_max_display is None:
-                day_gap_max_display = [None] * len(labels)
-            if day_gap_max_period_display is None:
-                day_gap_max_period_display = [None] * len(labels)
-            if day_gap_avg_display is None:
-                day_gap_avg_display = [None] * len(labels)
-            if day_avg_milk_per_feed_display is None:
-                day_avg_milk_per_feed_display = [None] * len(labels)
-            if day_max_milk_per_feed_display is None:
-                day_max_milk_per_feed_display = [None] * len(labels)
-            if day_breast_milk_percent_display is None:
-                day_breast_milk_percent_display = [None] * len(labels)
-            if night_gap_max_display is None:
-                night_gap_max_display = [None] * len(labels)
-            if night_gap_max_period_display is None:
-                night_gap_max_period_display = [None] * len(labels)
-            if night_gap_avg_display is None:
-                night_gap_avg_display = [None] * len(labels)
-            if night_avg_milk_per_feed_display is None:
-                night_avg_milk_per_feed_display = [None] * len(labels)
-            if night_max_milk_per_feed_display is None:
-                night_max_milk_per_feed_display = [None] * len(labels)
-            if night_breast_milk_percent_display is None:
-                night_breast_milk_percent_display = [None] * len(labels)
-            split[str(night_start_hour)] = {
-                "day": {
-                    "daily": day_daily_display,
-                    "breastDaily": day_breast_daily_display,
-                    "formulaDaily": day_formula_daily_display,
-                    "cumulative": day_cumulative_display,
-                    "avgMilkPerFeed": day_avg_milk_per_feed_display,
-                    "maxMilkPerFeed": day_max_milk_per_feed_display,
-                    "breastMilkPercent": day_breast_milk_percent_display,
-                    "diaperAll": day_diaper_display_by_mode["all"],
-                    "diaperAllMeta": day_diaper_meta_display_by_mode["all"],
-                    "diaperDirty": day_diaper_display_by_mode["dirty"],
-                    "diaperDirtyMeta": day_diaper_meta_display_by_mode["dirty"],
-                    "diaperWet": day_diaper_display_by_mode["wet"],
-                    "diaperWetMeta": day_diaper_meta_display_by_mode["wet"],
-                    "diaperDry": day_diaper_display_by_mode["dry"],
-                    "diaperDryMeta": day_diaper_meta_display_by_mode["dry"],
-                    "maxGap": day_gap_max_display,
-                    "maxGapPeriod": day_gap_max_period_display,
-                    "avgGap": day_gap_avg_display,
-                },
-                "night": {
-                    "daily": night_daily_display,
-                    "breastDaily": night_breast_daily_display,
-                    "formulaDaily": night_formula_daily_display,
-                    "cumulative": night_cumulative_display,
-                    "avgMilkPerFeed": night_avg_milk_per_feed_display,
-                    "maxMilkPerFeed": night_max_milk_per_feed_display,
-                    "breastMilkPercent": night_breast_milk_percent_display,
-                    "diaperAll": night_diaper_display_by_mode["all"],
-                    "diaperAllMeta": night_diaper_meta_display_by_mode["all"],
-                    "diaperDirty": night_diaper_display_by_mode["dirty"],
-                    "diaperDirtyMeta": night_diaper_meta_display_by_mode["dirty"],
-                    "diaperWet": night_diaper_display_by_mode["wet"],
-                    "diaperWetMeta": night_diaper_meta_display_by_mode["wet"],
-                    "diaperDry": night_diaper_display_by_mode["dry"],
-                    "diaperDryMeta": night_diaper_meta_display_by_mode["dry"],
-                    "maxGap": night_gap_max_display,
-                    "maxGapPeriod": night_gap_max_period_display,
-                    "avgGap": night_gap_avg_display,
-                },
-            }
+        hourly = _plot_child_hourly_by_day(
+            labels,
+            day_hour_totals,
+            breast_day_hour_totals,
+            formula_day_hour_totals,
+            day_hour_feed_counts,
+            day_hour_max_feeds,
+            diaper_day_hour_stats,
+            child_gap_hour_stats,
+        )
 
         series.append(
             {
@@ -1977,7 +1716,7 @@ def milk_totals_by_day(events, child_map):
                 "maxGap": max_gap_display,
                 "maxGapPeriod": max_gap_period_display,
                 "avgGap": avg_gap_display,
-                "split": split,
+                "hourly": hourly,
                 "borderColor": palette[idx % len(palette)],
                 "backgroundColor": palette[idx % len(palette)],
             }
@@ -1991,7 +1730,7 @@ def milk_totals_by_day(events, child_map):
             "maxGap": all_babies_max_gap_display,
             "maxGapPeriod": all_babies_max_gap_period_display,
             "avgGap": all_babies_avg_gap_display,
-            "split": all_babies_split,
+            "hourly": all_babies_gap_hourly,
         },
         "defaultNightStart": 20,
         "skippedUnits": skipped_units,
@@ -2483,58 +2222,355 @@ def build_plot_html(events, child_map, generated_at):
       return output;
     }}
 
-    function splitSeriesValues(entry, plotMode, diaperMetric, milkMetric, nightStartHour, period) {{
-      const splitByHour = entry.split || {{}};
-      const split = splitByHour[String(nightStartHour)] || null;
-      if (!split || !split[period]) {{
-        return [];
+    const diaperPlotModes = ["all", "dirty", "wet", "dry"];
+
+    function emptySeries() {{
+      return new Array(labels.length).fill(null);
+    }}
+
+    function roundPlotValue(value, decimals) {{
+      if (value == null || !Number.isFinite(Number(value))) {{
+        return null;
       }}
+      const factor = 10 ** decimals;
+      const scaled = Number(value) * factor;
+      const lower = Math.floor(scaled);
+      const fraction = scaled - lower;
+      let rounded;
+      if (Math.abs(fraction - 0.5) < 1e-9) {{
+        rounded = lower % 2 === 0 ? lower : lower + 1;
+      }} else {{
+        rounded = Math.round(scaled);
+      }}
+      return Number((rounded / factor).toFixed(decimals));
+    }}
+
+    function trimMilkSeries(dailyPoints, cumulativePoints) {{
+      let firstNonzero = null;
+      let lastNonzero = null;
+      dailyPoints.forEach((value, idx) => {{
+        if (Number(value) > 0) {{
+          if (firstNonzero == null) {{
+            firstNonzero = idx;
+          }}
+          lastNonzero = idx;
+        }}
+      }});
+      if (firstNonzero == null) {{
+        return null;
+      }}
+
+      const daily = [];
+      const cumulative = [];
+      dailyPoints.forEach((dailyValue, idx) => {{
+        if (idx < firstNonzero || idx > lastNonzero) {{
+          daily.push(null);
+          cumulative.push(idx === firstNonzero - 1 ? 0 : null);
+          return;
+        }}
+        daily.push(roundPlotValue(dailyValue, 1));
+        cumulative.push(roundPlotValue(cumulativePoints[idx], 1));
+      }});
+      return {{ daily, cumulative }};
+    }}
+
+    function trimOptionalSeries(values, decimals) {{
+      let firstIdx = null;
+      let lastIdx = null;
+      values.forEach((value, idx) => {{
+        if (value != null) {{
+          if (firstIdx == null) {{
+            firstIdx = idx;
+          }}
+          lastIdx = idx;
+        }}
+      }});
+      if (firstIdx == null || lastIdx == null) {{
+        return null;
+      }}
+
+      return values.map((value, idx) => {{
+        if (idx < firstIdx || idx > lastIdx || value == null) {{
+          return null;
+        }}
+        return roundPlotValue(value, decimals);
+      }});
+    }}
+
+    function trimCountSeries(values, decimals) {{
+      let firstNonzero = null;
+      let lastNonzero = null;
+      values.forEach((value, idx) => {{
+        if (Number(value) > 0) {{
+          if (firstNonzero == null) {{
+            firstNonzero = idx;
+          }}
+          lastNonzero = idx;
+        }}
+      }});
+      if (firstNonzero == null || lastNonzero == null) {{
+        return null;
+      }}
+
+      return values.map((value, idx) => {{
+        if (idx < firstNonzero || idx > lastNonzero) {{
+          return null;
+        }}
+        return roundPlotValue(value, decimals);
+      }});
+    }}
+
+    function maskSeriesWithNumeric(values, numericMask) {{
+      if (!Array.isArray(values) || !Array.isArray(numericMask)) {{
+        return null;
+      }}
+      return values.map((value, idx) => numericMask[idx] != null ? value : null);
+    }}
+
+    function isNightHour(hour, nightStartHour) {{
+      const nightEndHour = (nightStartHour + 12) % 24;
+      if (nightStartHour < nightEndHour) {{
+        return nightStartHour <= hour && hour < nightEndHour;
+      }}
+      return hour >= nightStartHour || hour < nightEndHour;
+    }}
+
+    function periodMatchesHour(hour, nightStartHour, period) {{
+      if (!period) {{
+        return true;
+      }}
+      const night = isNightHour(hour, nightStartHour);
+      return period === "night" ? night : !night;
+    }}
+
+    function emptyDiaperStatsByMode() {{
+      const output = {{}};
+      diaperPlotModes.forEach((mode) => {{
+        output[mode] = {{ count: 0, blowoutCount: 0, blowoutDetails: [] }};
+      }});
+      return output;
+    }}
+
+    function addDiaperStats(target, source) {{
+      if (!source) {{
+        return;
+      }}
+      diaperPlotModes.forEach((mode) => {{
+        const stat = source[mode];
+        if (!stat) {{
+          return;
+        }}
+        const targetStat = target[mode];
+        targetStat.count += Number.parseInt(stat.count || 0, 10);
+        targetStat.blowoutCount += Number.parseInt(stat.blowoutCount || 0, 10);
+        (stat.blowoutDetails || []).forEach((detail) => {{
+          if (!targetStat.blowoutDetails.includes(detail)) {{
+            targetStat.blowoutDetails.push(detail);
+          }}
+        }});
+      }});
+    }}
+
+    function aggregateHourlyDay(hourlyByDay, dayKey, nightStartHour, period) {{
+      const hours = hourlyByDay && hourlyByDay[dayKey] ? hourlyByDay[dayKey] : {{}};
+      const diaper = emptyDiaperStatsByMode();
+      const aggregate = {{
+        daily: 0,
+        breastDaily: 0,
+        formulaDaily: 0,
+        feedCount: 0,
+        maxMilkPerFeed: null,
+        breastMilkPercent: null,
+        diaper,
+        gapSum: 0,
+        gapCount: 0,
+        maxGap: null,
+        maxGapDisplay: null,
+        maxGapPeriod: null,
+      }};
+
+      Object.entries(hours).forEach(([hourText, hourPayload]) => {{
+        const hour = Number.parseInt(hourText, 10);
+        if (Number.isNaN(hour) || !periodMatchesHour(hour, nightStartHour, period)) {{
+          return;
+        }}
+
+        aggregate.daily += Number(hourPayload.daily || 0);
+        aggregate.breastDaily += Number(hourPayload.breastDaily || 0);
+        aggregate.formulaDaily += Number(hourPayload.formulaDaily || 0);
+        aggregate.feedCount += Number.parseInt(hourPayload.feedCount || 0, 10);
+
+        if (hourPayload.maxMilkPerFeed != null) {{
+          const maxFeed = Number(hourPayload.maxMilkPerFeed);
+          if (Number.isFinite(maxFeed) && (aggregate.maxMilkPerFeed == null || maxFeed > aggregate.maxMilkPerFeed)) {{
+            aggregate.maxMilkPerFeed = maxFeed;
+          }}
+        }}
+
+        addDiaperStats(diaper, hourPayload.diaper);
+
+        const gapCount = Number.parseInt(hourPayload.gapCount || 0, 10);
+        if (gapCount > 0) {{
+          aggregate.gapSum += Number(hourPayload.gapSum || 0);
+          aggregate.gapCount += gapCount;
+          const maxGap = Number(hourPayload.maxGap || 0);
+          if (aggregate.maxGap == null || maxGap > aggregate.maxGap) {{
+            aggregate.maxGap = maxGap;
+            aggregate.maxGapDisplay = hourPayload.maxGapDisplay != null ? Number(hourPayload.maxGapDisplay) : maxGap;
+            aggregate.maxGapPeriod = hourPayload.maxGapPeriod || null;
+          }}
+        }}
+      }});
+
+      const mixTotal = aggregate.breastDaily + aggregate.formulaDaily;
+      if (mixTotal > 0) {{
+        aggregate.breastMilkPercent = aggregate.breastDaily * 100 / mixTotal;
+      }}
+      return aggregate;
+    }}
+
+    function deriveHourlySeries(hourlyByDay, nightStartHour, period) {{
+      const dailyPoints = [];
+      const breastDailyPoints = [];
+      const formulaDailyPoints = [];
+      const cumulativePoints = [];
+      const avgMilkPerFeedPoints = [];
+      const maxMilkPerFeedPoints = [];
+      const breastMilkPercentPoints = [];
+      const diaperPointsByMode = {{}};
+      const diaperMetaByMode = {{}};
+      const maxGapPoints = [];
+      const maxGapPeriods = [];
+      const avgGapPoints = [];
+      let runningTotal = 0;
+
+      diaperPlotModes.forEach((mode) => {{
+        diaperPointsByMode[mode] = [];
+        diaperMetaByMode[mode] = [];
+      }});
+
+      labels.forEach((dayKey) => {{
+        const aggregate = aggregateHourlyDay(hourlyByDay, dayKey, nightStartHour, period);
+        runningTotal += aggregate.daily;
+        dailyPoints.push(aggregate.daily);
+        breastDailyPoints.push(aggregate.breastDaily);
+        formulaDailyPoints.push(aggregate.formulaDaily);
+        cumulativePoints.push(runningTotal);
+        avgMilkPerFeedPoints.push(aggregate.feedCount > 0 ? aggregate.daily / aggregate.feedCount : null);
+        maxMilkPerFeedPoints.push(aggregate.maxMilkPerFeed);
+        breastMilkPercentPoints.push(aggregate.breastMilkPercent);
+
+        diaperPlotModes.forEach((mode) => {{
+          const stat = aggregate.diaper[mode];
+          diaperPointsByMode[mode].push(stat.count);
+          diaperMetaByMode[mode].push({{
+            count: stat.count,
+            blowoutCount: stat.blowoutCount,
+            blowoutDetails: stat.blowoutDetails.slice(),
+          }});
+        }});
+
+        if (aggregate.gapCount > 0) {{
+          maxGapPoints.push(aggregate.maxGapDisplay);
+          maxGapPeriods.push(aggregate.maxGapPeriod);
+          avgGapPoints.push(aggregate.gapSum / aggregate.gapCount);
+        }} else {{
+          maxGapPoints.push(null);
+          maxGapPeriods.push(null);
+          avgGapPoints.push(null);
+        }}
+      }});
+
+      const milkSeries = trimMilkSeries(dailyPoints, cumulativePoints);
+      const result = {{
+        daily: milkSeries ? milkSeries.daily : emptySeries(),
+        cumulative: milkSeries ? milkSeries.cumulative : emptySeries(),
+        breastDaily: trimCountSeries(breastDailyPoints, 1) || emptySeries(),
+        formulaDaily: trimCountSeries(formulaDailyPoints, 1) || emptySeries(),
+        avgMilkPerFeed: trimOptionalSeries(avgMilkPerFeedPoints, 1) || emptySeries(),
+        maxMilkPerFeed: trimOptionalSeries(maxMilkPerFeedPoints, 1) || emptySeries(),
+        breastMilkPercent: trimOptionalSeries(breastMilkPercentPoints, 1) || emptySeries(),
+        maxGap: trimOptionalSeries(maxGapPoints, 2) || emptySeries(),
+        avgGap: trimOptionalSeries(avgGapPoints, 2) || emptySeries(),
+      }};
+      result.maxGapPeriod = maskSeriesWithNumeric(maxGapPeriods, result.maxGap) || emptySeries();
+
+      diaperPlotModes.forEach((mode) => {{
+        const field = diaperSeriesField(mode);
+        const metaField = diaperMetaField(mode);
+        const display = trimCountSeries(diaperPointsByMode[mode], 0) || emptySeries();
+        result[field] = display;
+        result[metaField] = maskSeriesWithNumeric(diaperMetaByMode[mode], display) || emptySeries();
+      }});
+
+      return result;
+    }}
+
+    function derivedEntrySplit(entry, nightStartHour, period) {{
+      if (!entry.$derivedSplits) {{
+        entry.$derivedSplits = {{}};
+      }}
+      const key = `${{nightStartHour}}:${{period}}`;
+      if (!entry.$derivedSplits[key]) {{
+        entry.$derivedSplits[key] = deriveHourlySeries(entry.hourly || {{}}, nightStartHour, period);
+      }}
+      return entry.$derivedSplits[key];
+    }}
+
+    function derivedAllBabiesGapSplit(nightStartHour, period) {{
+      if (!allBabiesGap) {{
+        return null;
+      }}
+      if (!allBabiesGap.$derivedSplits) {{
+        allBabiesGap.$derivedSplits = {{}};
+      }}
+      const key = `${{nightStartHour}}:${{period}}`;
+      if (!allBabiesGap.$derivedSplits[key]) {{
+        allBabiesGap.$derivedSplits[key] = deriveHourlySeries(allBabiesGap.hourly || {{}}, nightStartHour, period);
+      }}
+      return allBabiesGap.$derivedSplits[key];
+    }}
+
+    function splitSeriesValues(entry, plotMode, diaperMetric, milkMetric, nightStartHour, period) {{
+      const split = derivedEntrySplit(entry, nightStartHour, period);
       if (plotMode === "milk-daily") {{
         const milkField = milkDailyField(milkMetric);
-        return split[period][milkField] || [];
+        return split[milkField] || [];
       }}
       if (plotMode === "milk-cumulative") {{
-        return split[period].cumulative || [];
+        return split.cumulative || [];
       }}
       if (plotMode === "milk-average-feed") {{
-        return split[period].avgMilkPerFeed || [];
+        return split.avgMilkPerFeed || [];
       }}
       if (plotMode === "milk-max-feed") {{
-        return split[period].maxMilkPerFeed || [];
+        return split.maxMilkPerFeed || [];
       }}
       if (plotMode === "milk-breast-percent") {{
-        return split[period].breastMilkPercent || [];
+        return split.breastMilkPercent || [];
       }}
       if (plotMode === "gap-max") {{
-        return split[period].maxGap || [];
+        return split.maxGap || [];
       }}
       if (plotMode === "gap-avg") {{
-        return split[period].avgGap || [];
+        return split.avgGap || [];
       }}
       if (isDiaperMode(plotMode)) {{
         const diaperField = diaperSeriesField(diaperMetric);
-        return split[period][diaperField] || [];
+        return split[diaperField] || [];
       }}
-      return split[period].daily || [];
+      return split.daily || [];
     }}
 
     function splitSeriesDiaperMeta(entry, diaperMetric, nightStartHour, period) {{
-      const splitByHour = entry.split || {{}};
-      const split = splitByHour[String(nightStartHour)] || null;
-      if (!split || !split[period]) {{
-        return [];
-      }}
+      const split = derivedEntrySplit(entry, nightStartHour, period);
       const metaField = diaperMetaField(diaperMetric);
-      return split[period][metaField] || [];
+      return split[metaField] || [];
     }}
 
     function splitSeriesMaxGapPeriods(entry, nightStartHour, period) {{
-      const splitByHour = entry.split || {{}};
-      const split = splitByHour[String(nightStartHour)] || null;
-      if (!split || !split[period]) {{
-        return [];
-      }}
-      return split[period].maxGapPeriod || [];
+      const split = derivedEntrySplit(entry, nightStartHour, period);
+      return split.maxGapPeriod || [];
     }}
 
     function modeSeriesValues(entry, plotMode, diaperMetric, milkMetric) {{
@@ -2600,16 +2636,12 @@ def build_plot_html(events, child_map, generated_at):
       if (!allBabiesGap) {{
         return [];
       }}
-      const splitByHour = allBabiesGap.split || {{}};
-      const split = splitByHour[String(nightStartHour)] || null;
-      if (!split || !split[period]) {{
-        return [];
-      }}
+      const split = derivedAllBabiesGapSplit(nightStartHour, period);
       if (plotMode === "gap-max") {{
-        return split[period].maxGap || [];
+        return split.maxGap || [];
       }}
       if (plotMode === "gap-avg") {{
-        return split[period].avgGap || [];
+        return split.avgGap || [];
       }}
       return [];
     }}
@@ -2618,12 +2650,8 @@ def build_plot_html(events, child_map, generated_at):
       if (!allBabiesGap) {{
         return [];
       }}
-      const splitByHour = allBabiesGap.split || {{}};
-      const split = splitByHour[String(nightStartHour)] || null;
-      if (!split || !split[period]) {{
-        return [];
-      }}
-      return split[period].maxGapPeriod || [];
+      const split = derivedAllBabiesGapSplit(nightStartHour, period);
+      return split.maxGapPeriod || [];
     }}
 
     function allBabiesDailyMilkTotal(plotMode, diaperMetric, milkMetric, splitEnabled, nightStartHour, period, dataIndex) {{
