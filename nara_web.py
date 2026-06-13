@@ -3140,7 +3140,6 @@ def build_plot_html(events, child_map, generated_at):
         const type = timelineTypes[typeIndex] || {{ key: "event" }};
         const groupKey = timelineColumnGroupKey(typeIndex);
         presentChildIndexes.add(childIndex);
-        presentTypeIndexes.add(typeIndex);
         if (!presentChildGroupSets.has(childIndex)) {{
           presentChildGroupSets.set(childIndex, new Set());
         }}
@@ -3148,6 +3147,7 @@ def build_plot_html(events, child_map, generated_at):
         const childHidden = isDatasetHidden(timelineChildKey(child), false);
         const typeHidden = hiddenTimelineTypeKeys.has(type.key || "event");
         if (!childHidden) {{
+          presentTypeIndexes.add(typeIndex);
           typeCounts.set(typeIndex, (typeCounts.get(typeIndex) || 0) + 1);
         }}
         if (!typeHidden) {{
@@ -4172,6 +4172,14 @@ def build_plot_html(events, child_map, generated_at):
                 }}
                 targetChart.setDatasetVisibility(idx, !currentlyVisible);
                 targetChart.update();
+              }},
+              onHover: (event, legendItem, legend) => {{
+                legend.chart.canvas.style.cursor = "pointer";
+              }},
+              onLeave: (event, legendItem, legend) => {{
+                if (legend && legend.chart && legend.chart.canvas) {{
+                  legend.chart.canvas.style.cursor = "";
+                }}
               }},
             }},
             tooltip: {{
