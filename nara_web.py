@@ -3125,6 +3125,8 @@ def build_plot_html(events, child_map, generated_at):
       const presentChildGroupSets = new Map();
       const childGroupSets = new Map();
       const visibleTypeIndexes = new Set();
+      const typeCounts = new Map();
+      const childCounts = new Map();
       timelinePoints.forEach((point) => {{
         if (!timelinePointIntersectsXRange(point, xMin, xMax)) {{
           return;
@@ -3143,10 +3145,18 @@ def build_plot_html(events, child_map, generated_at):
           presentChildGroupSets.set(childIndex, new Set());
         }}
         presentChildGroupSets.get(childIndex).add(groupKey);
-        if (isDatasetHidden(timelineChildKey(child), false)) {{
+        const childHidden = isDatasetHidden(timelineChildKey(child), false);
+        const typeHidden = hiddenTimelineTypeKeys.has(type.key || "event");
+        if (!childHidden) {{
+          typeCounts.set(typeIndex, (typeCounts.get(typeIndex) || 0) + 1);
+        }}
+        if (!typeHidden) {{
+          childCounts.set(childIndex, (childCounts.get(childIndex) || 0) + 1);
+        }}
+        if (childHidden) {{
           return;
         }}
-        if (hiddenTimelineTypeKeys.has(type.key || "event")) {{
+        if (typeHidden) {{
           return;
         }}
         groupKeys.add(groupKey);
@@ -3172,6 +3182,8 @@ def build_plot_html(events, child_map, generated_at):
           .map((child, idx) => idx)
           .filter((idx) => presentChildIndexes.has(idx)),
         presentChildGroups,
+        typeCounts,
+        childCounts,
         visibleGroupKeys: timelineSortedColumnGroups(groupKeys),
         visibleTypeIndexes: Array.from(visibleTypeIndexes).sort((a, b) => timelineTypeSortValue(a) - timelineTypeSortValue(b) || a - b),
         visibleChildIndexes: timelineChildren
@@ -3403,7 +3415,8 @@ def build_plot_html(events, child_map, generated_at):
       }});
 
       const datasets = [];
-      const presentChildIndexes = new Set(timelineVisibleSummary().presentChildIndexes);
+      const timelineSummary = timelineVisibleSummary();
+      const presentChildIndexes = new Set(timelineSummary.presentChildIndexes);
       byChild.forEach((entry, childIndex) => {{
         if (!entry.data.length && !presentChildIndexes.has(childIndex)) {{
           return;
@@ -3426,6 +3439,7 @@ def build_plot_html(events, child_map, generated_at):
           pointBorderColor: "rgba(0,0,0,0)",
           hidden: isDatasetHidden(customKey, defaultHidden),
           defaultHidden,
+          timelineCount: timelineSummary.childCounts.get(childIndex) || 0,
         }});
       }});
       return datasets;
@@ -3789,7 +3803,8 @@ def build_plot_html(events, child_map, generated_at):
         return;
       }}
       legendEl.textContent = "";
-      timelineVisibleSummary().presentTypeIndexes
+      const timelineSummary = timelineVisibleSummary();
+      timelineSummary.presentTypeIndexes
         .forEach((typeIndex) => {{
         const type = timelineTypes[typeIndex] || {{}};
         const typeKey = type.key || "event";
@@ -3819,7 +3834,7 @@ def build_plot_html(events, child_map, generated_at):
           emoji.appendChild(overlay);
         }}
         const label = document.createElement("span");
-        label.textContent = type.label || "Event";
+        label.textContent = `${{type.label || "Event"}} (${{timelineSummary.typeCounts.get(typeIndex) || 0}})`;
         item.appendChild(emoji);
         item.appendChild(label);
         legendEl.appendChild(item);
@@ -4127,6 +4142,7 @@ def build_plot_html(events, child_map, generated_at):
                     }}
                     return {{
                       ...item,
+                      text: `${{dataset.label}} (${{dataset.timelineCount || 0}})`,
                       fillStyle: dataset.backgroundColor,
                       strokeStyle: dataset.borderColor,
                       lineWidth: 2,
