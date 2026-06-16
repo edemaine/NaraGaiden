@@ -1910,6 +1910,7 @@ def milk_totals_by_day(events, child_map):
         },
         "timeline": _build_timeline_payload(events, child_map, palette),
         "defaultNightStart": 20,
+        "defaultTimelineStart": 0,
         "skippedUnits": skipped_units,
     }
 
@@ -1924,6 +1925,12 @@ def build_plot_html(events, child_map, generated_at):
         selected = " selected" if hour == default_night_start else ""
         night_start_options.append(f"<option value=\"{hour}\"{selected}>{hour:02d}:00</option>")
     night_start_options_html = "\n        ".join(night_start_options)
+    default_timeline_start = int(chart_data.get("defaultTimelineStart", 0))
+    timeline_start_options = []
+    for hour in range(24):
+        selected = " selected" if hour == default_timeline_start else ""
+        timeline_start_options.append(f"<option value=\"{hour}\"{selected}>{hour:02d}:00</option>")
+    timeline_start_options_html = "\n        ".join(timeline_start_options)
     css = (GLOBAL_CSS + """
     body {
       display: flex;
@@ -1955,6 +1962,9 @@ def build_plot_html(events, child_map, generated_at):
       gap: 8px;
       flex-wrap: wrap;
       align-items: center;
+    }
+    .actions [hidden] {
+      display: none !important;
     }
     .btn {
       appearance: none;
@@ -2100,6 +2110,10 @@ def build_plot_html(events, child_map, generated_at):
     const timelinePoints = timeline.points || [];
     let activeLabels = labels;
     const defaultNightStart = Number(payload.defaultNightStart ?? 20);
+    const defaultTimelineStart = Number(payload.defaultTimelineStart ?? 0);
+    let activeTimelineStart = defaultTimelineStart;
+    let activeTimelineDays = timelineDays.slice();
+    let activeTimelineDayIndexByKey = new Map(activeTimelineDays.map((day, idx) => [day, idx]));
     const hiddenSeriesKeys = new Set();
     const shownSeriesKeys = new Set();
     const hiddenTimelineTypeKeys = new Set();
@@ -2137,6 +2151,101 @@ def build_plot_html(events, child_map, generated_at):
         return null;
       }}
       return new Date(year, month - 1, day);
+    }}
+
+    function shiftedDayKey(dayKey, dayOffset) {{
+      const dayDate = parseDayKey(dayKey);
+      if (!dayDate) {{
+        return dayKey;
+      }}
+      dayDate.setDate(dayDate.getDate() + dayOffset);
+      return localDayKey(dayDate);
+    }}
+
+    function timelineCutoffMinute(startHour = activeTimelineStart) {{
+      const hour = Number.isFinite(Number(startHour)) ? Number(startHour) : 0;
+      return Math.max(0, Math.min(23, Math.round(hour))) * 60;
+    }}
+
+    function timelineRawDayKey(point) {{
+      const rawDayIndex = Number(point && point[0]);
+      if (!Number.isFinite(rawDayIndex)) {{
+        return null;
+      }}
+      return timelineDays[rawDayIndex] || null;
+    }}
+
+    function timelinePlottedMinute(point, startHour = activeTimelineStart) {{
+      const minute = Number(point && point[1]);
+      if (!Number.isFinite(minute)) {{
+        return null;
+      }}
+      return minute < timelineCutoffMinute(startHour) ? minute + 1440 : minute;
+    }}
+
+    function timelinePlottedDayKey(point, startHour = activeTimelineStart) {{
+      const rawDayKey = timelineRawDayKey(point);
+      if (!rawDayKey) {{
+        return null;
+      }}
+      const minute = Number(point && point[1]);
+      return minute < timelineCutoffMinute(startHour) ? shiftedDayKey(rawDayKey, -1) : rawDayKey;
+    }}
+
+    function timelineBuildDays(startHour = activeTimelineStart) {{
+      const dayKeys = new Set();
+      timelinePoints.forEach((point) => {{
+        const dayKey = timelinePlottedDayKey(point, startHour);
+        if (dayKey) {{
+          dayKeys.add(dayKey);
+        }}
+      }});
+      return Array.from(dayKeys).sort();
+    }}
+
+    function setActiveTimelineStart(startHour) {{
+      activeTimelineStart = Math.max(0, Math.min(23, Number.isFinite(Number(startHour)) ? Math.round(Number(startHour)) : 0));
+      activeTimelineDays = timelineBuildDays(activeTimelineStart);
+      activeTimelineDayIndexByKey = new Map(activeTimelineDays.map((day, idx) => [day, idx]));
+      timelineLayoutCache = null;
+    }}
+
+    function timelinePlottedDayIndex(point, startHour = activeTimelineStart) {{
+      const dayKey = timelinePlottedDayKey(point, startHour);
+      if (!dayKey) {{
+        return null;
+      }}
+      const dayIndex = activeTimelineDayIndexByKey.get(dayKey);
+      return dayIndex == null ? null : dayIndex;
+    }}
+
+    function timelinePlottedEndMinute(point, startHour = activeTimelineStart) {{
+      if (!point || point[4] == null) {{
+        return null;
+      }}
+      const endMinute = Number(point[4]);
+      if (!Number.isFinite(endMinute)) {{
+        return null;
+      }}
+      const beginMinute = Number(point[1]);
+      return beginMinute < timelineCutoffMinute(startHour) ? endMinute + 1440 : endMinute;
+    }}
+
+    function timelineActualDateTime(dayKey, minute) {{
+      const dayDate = parseDayKey(dayKey);
+      const numericMinute = Number(minute);
+      if (!dayDate || !Number.isFinite(numericMinute)) {{
+        return "";
+      }}
+      dayDate.setMinutes(Math.round(numericMinute));
+      return `${{localDayKey(dayDate)}} ${{formatMinuteOfDay(numericMinute)}}`;
+    }}
+
+    function timelineActualEndDateTime(point) {{
+      if (!point || point[4] == null) {{
+        return "";
+      }}
+      return timelineActualDateTime(timelineRawDayKey(point), point[4]);
     }}
 
     function isWeeklyBoundary(index) {{
@@ -2941,6 +3050,16 @@ def build_plot_html(events, child_map, generated_at):
       return `${{String(hour).padStart(2, "0")}}:${{String(min).padStart(2, "0")}}`;
     }}
 
+    function formatTimelineMinute(minute) {{
+      if (minute == null || !Number.isFinite(Number(minute))) {{
+        return "";
+      }}
+      const rounded = Math.round(Number(minute));
+      const hour = Math.floor(rounded / 60);
+      const min = ((rounded % 60) + 60) % 60;
+      return `${{String(hour).padStart(2, "0")}}:${{String(min).padStart(2, "0")}}`;
+    }}
+
     function timelineValueText(point) {{
       if (point.value == null) {{
         return "";
@@ -3016,6 +3135,10 @@ def build_plot_html(events, child_map, generated_at):
       return (1440 / height) * timelineIconHeightPx() * 1.15;
     }}
 
+    function timelineVerticalEdgePaddingMinutes() {{
+      return timelineVerticalCollisionMinutes() / 2;
+    }}
+
     function timelineBandPixelWidth() {{
       const xScale = chart && chart.scales && chart.scales.x;
       const {{ maxBandWidth }} = timelineBandLayout();
@@ -3024,7 +3147,7 @@ def build_plot_html(events, child_map, generated_at):
       const chartWidth = chartArea ? chartArea.right - chartArea.left : 0;
       const width = chartWidth > 0 ? chartWidth : canvas && canvas.clientWidth ? canvas.clientWidth : 900;
       const scaleMin = xScale && Number.isFinite(Number(xScale.min)) ? Number(xScale.min) : 0;
-      const scaleMax = xScale && Number.isFinite(Number(xScale.max)) ? Number(xScale.max) : Math.max(1, timelineDays.length);
+      const scaleMax = xScale && Number.isFinite(Number(xScale.max)) ? Number(xScale.max) : Math.max(1, activeTimelineDays.length);
       const range = Math.max(1, scaleMax - scaleMin);
       return (width / range) * bandWidth;
     }}
@@ -3076,7 +3199,7 @@ def build_plot_html(events, child_map, generated_at):
       const chartArea = chart && chart.chartArea;
       const chartWidth = chartArea ? chartArea.right - chartArea.left : 0;
       const scaleMin = xScale && Number.isFinite(Number(xScale.min)) ? Number(xScale.min) : 0;
-      const scaleMax = xScale && Number.isFinite(Number(xScale.max)) ? Number(xScale.max) : Math.max(1, timelineDays.length);
+      const scaleMax = xScale && Number.isFinite(Number(xScale.max)) ? Number(xScale.max) : Math.max(1, activeTimelineDays.length);
       const range = Math.max(1, scaleMax - scaleMin);
       const width = chartWidth > 0 ? chartWidth : canvas && canvas.clientWidth ? canvas.clientWidth : 900;
       return (range / width) * timelineIconHalfWidthPx(typeIndex);
@@ -3087,7 +3210,7 @@ def build_plot_html(events, child_map, generated_at):
     }}
 
     function timelinePointIntersectsXRange(point, xMin, xMax) {{
-      const dayIndex = Number(point[0]);
+      const dayIndex = timelinePlottedDayIndex(point);
       return Number.isFinite(dayIndex) && dayIndex < xMax && dayIndex + 1 > xMin;
     }}
 
@@ -3099,7 +3222,7 @@ def build_plot_html(events, child_map, generated_at):
     function timelineRangeForScale() {{
       const xScale = chart && chart.scales && chart.scales.x;
       const xMin = xScale && Number.isFinite(Number(xScale.min)) ? Number(xScale.min) : 0;
-      const xMax = xScale && Number.isFinite(Number(xScale.max)) ? Number(xScale.max) : Math.max(1, timelineDays.length);
+      const xMax = xScale && Number.isFinite(Number(xScale.max)) ? Number(xScale.max) : Math.max(1, activeTimelineDays.length);
       return {{ xMin, xMax }};
     }}
 
@@ -3107,6 +3230,7 @@ def build_plot_html(events, child_map, generated_at):
       return [
         xMin,
         xMax,
+        activeTimelineStart,
         Array.from(hiddenSeriesKeys).sort().join(","),
         Array.from(shownSeriesKeys).sort().join(","),
         Array.from(hiddenTimelineTypeKeys).sort().join(","),
@@ -3129,6 +3253,10 @@ def build_plot_html(events, child_map, generated_at):
       const childCounts = new Map();
       timelinePoints.forEach((point) => {{
         if (!timelinePointIntersectsXRange(point, xMin, xMax)) {{
+          return;
+        }}
+        const plottedDayIndex = timelinePlottedDayIndex(point);
+        if (plottedDayIndex == null) {{
           return;
         }}
         const childIndex = Number(point[2]);
@@ -3365,15 +3493,15 @@ def build_plot_html(events, child_map, generated_at):
 
       const validPoints = [];
       timelinePoints.forEach((point) => {{
-        const dayIndex = Number(point[0]);
-        const minute = Number(point[1]);
+        const dayIndex = timelinePlottedDayIndex(point);
+        const minute = timelinePlottedMinute(point);
         const childIndex = Number(point[2]);
         const typeIndex = Number(point[3]);
         if (
-          !Number.isFinite(dayIndex) ||
+          dayIndex == null ||
           !Number.isFinite(minute) ||
           !Number.isFinite(typeIndex) ||
-          !timelineDays[dayIndex] ||
+          !activeTimelineDays[dayIndex] ||
           !byChild.has(childIndex)
         ) {{
           return;
@@ -3398,20 +3526,49 @@ def build_plot_html(events, child_map, generated_at):
           return;
         }}
         const centerOffset = band ? band.centerOffset : 0.5;
-        byChild.get(childIndex).data.push({{
-          x: dayIndex + centerOffset + (xOffsets.get(point) || 0),
+        const x = dayIndex + centerOffset + (xOffsets.get(point) || 0);
+        const basePoint = {{
+          x,
           y: minute,
-          dayLabel: timelineDays[dayIndex],
+          dayLabel: activeTimelineDays[dayIndex],
+          actualStart: timelineActualDateTime(timelineRawDayKey(point), point[1]),
+          actualEnd: timelineActualEndDateTime(point),
           childIndex,
           typeIndex,
           typeKey: type.key || "event",
           emoji: type.emoji || "•",
           overlayEmoji: timelineOverlayEmoji(type.key || "event"),
           typeLabel: type.label || "Event",
-          endMinute: point[4],
+          endMinute: timelinePlottedEndMinute(point),
           value: point[5],
           note: noteIndex == null ? null : timelineNotes[noteIndex] || null,
-        }});
+        }};
+        const childData = byChild.get(childIndex).data;
+        childData.push(basePoint);
+
+        const minMinute = timelineCutoffMinute(activeTimelineStart);
+        const maxMinute = minMinute + 1440;
+        const edgePadding = timelineVerticalEdgePaddingMinutes();
+        if (minute - edgePadding < minMinute && dayIndex > 0) {{
+          childData.push({{
+            ...basePoint,
+            x: x - 1,
+            y: minute + 1440,
+            dayLabel: activeTimelineDays[dayIndex - 1],
+            endMinute: basePoint.endMinute == null ? null : basePoint.endMinute + 1440,
+            edgeCopy: true,
+          }});
+        }}
+        if (minute + edgePadding > maxMinute && dayIndex + 1 < activeTimelineDays.length) {{
+          childData.push({{
+            ...basePoint,
+            x: x + 1,
+            y: minute - 1440,
+            dayLabel: activeTimelineDays[dayIndex + 1],
+            endMinute: basePoint.endMinute == null ? null : basePoint.endMinute - 1440,
+            edgeCopy: true,
+          }});
+        }}
       }});
 
       const datasets = [];
@@ -3755,10 +3912,11 @@ def build_plot_html(events, child_map, generated_at):
         return;
       }}
       if (isTimelineMode(plotMode)) {{
-        targetChart.options.scales.y.min = 0;
-        targetChart.options.scales.y.max = 1440;
+        const minMinute = timelineCutoffMinute(activeTimelineStart);
+        targetChart.options.scales.y.min = minMinute;
+        targetChart.options.scales.y.max = minMinute + 1440;
         targetChart.options.scales.y.reverse = true;
-        targetChart.options.scales.y.ticks.callback = (value) => formatMinuteOfDay(value);
+        targetChart.options.scales.y.ticks.callback = (value) => formatTimelineMinute(value);
         return;
       }}
       if (isPercentMode(plotMode)) {{
@@ -3782,7 +3940,7 @@ def build_plot_html(events, child_map, generated_at):
       xScale.type = isTimelineMode(plotMode) ? "linear" : "category";
       if (isTimelineMode(plotMode)) {{
         xScale.min = 0;
-        xScale.max = Math.max(1, timelineDays.length);
+        xScale.max = Math.max(1, activeTimelineDays.length);
         xScale.ticks.stepSize = 1;
         xScale.ticks.precision = 0;
         return;
@@ -3873,6 +4031,29 @@ def build_plot_html(events, child_map, generated_at):
         smoothSlider.disabled = !isSmoothable(plotMode);
       }}
       const splitAvailable = !timelineVisible;
+      const splitControl = document.getElementById("split-day-night-control");
+      const nightStartLabel = document.getElementById("night-start-label");
+      const dayNightValue = document.getElementById("day-night-value");
+      const timelineStartControls = document.getElementById("timeline-start-controls");
+      const timelineStartSelect = document.getElementById("timeline-start-hour");
+      if (splitControl) {{
+        splitControl.hidden = timelineVisible;
+      }}
+      if (nightStartLabel) {{
+        nightStartLabel.hidden = timelineVisible;
+      }}
+      if (nightStartSelect) {{
+        nightStartSelect.hidden = timelineVisible;
+      }}
+      if (dayNightValue) {{
+        dayNightValue.hidden = timelineVisible;
+      }}
+      if (timelineStartControls) {{
+        timelineStartControls.hidden = !timelineVisible;
+      }}
+      if (timelineStartSelect) {{
+        timelineStartSelect.disabled = !timelineVisible;
+      }}
       if (splitToggle) {{
         splitToggle.disabled = !splitAvailable;
         if (!splitAvailable) {{
@@ -3923,11 +4104,20 @@ def build_plot_html(events, child_map, generated_at):
     const smoothSlider = document.getElementById("smooth-window");
     const splitToggle = document.getElementById("split-day-night");
     const nightStartSelect = document.getElementById("night-start-hour");
+    const timelineStartSelect = document.getElementById("timeline-start-hour");
 
     function currentNightStart() {{
       const raw = Number.parseInt(nightStartSelect ? nightStartSelect.value : String(defaultNightStart), 10);
       if (Number.isNaN(raw)) {{
         return defaultNightStart;
+      }}
+      return Math.max(0, Math.min(23, raw));
+    }}
+
+    function currentTimelineStart() {{
+      const raw = Number.parseInt(timelineStartSelect ? timelineStartSelect.value : String(defaultTimelineStart), 10);
+      if (Number.isNaN(raw)) {{
+        return defaultTimelineStart;
       }}
       return Math.max(0, Math.min(23, raw));
     }}
@@ -3979,7 +4169,7 @@ def build_plot_html(events, child_map, generated_at):
         }}
         const ctx = targetChart.ctx;
         const minDay = Math.max(0, Math.floor(xScale.min ?? 0));
-        const maxDay = Math.min(timelineDays.length - 1, Math.ceil(xScale.max ?? timelineDays.length) - 1);
+        const maxDay = Math.min(activeTimelineDays.length - 1, Math.ceil(xScale.max ?? activeTimelineDays.length) - 1);
         ctx.save();
         ctx.beginPath();
         ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
@@ -4054,7 +4244,7 @@ def build_plot_html(events, child_map, generated_at):
     }};
 
     function labelsForMode(plotMode) {{
-      return isTimelineMode(plotMode) ? timelineDays : labels;
+      return isTimelineMode(plotMode) ? activeTimelineDays : labels;
     }}
 
     let chart = null;
@@ -4077,6 +4267,9 @@ def build_plot_html(events, child_map, generated_at):
       if (nightStartSelect) {{
         nightStartSelect.disabled = true;
       }}
+      if (timelineStartSelect) {{
+        timelineStartSelect.disabled = true;
+      }}
       if (diaperMetricSelect) {{
         diaperMetricSelect.disabled = true;
       }}
@@ -4098,6 +4291,8 @@ def build_plot_html(events, child_map, generated_at):
       const initialSmoothWindow = 1;
       const initialSplitEnabled = false;
       const initialNightStart = defaultNightStart;
+      const initialTimelineStart = defaultTimelineStart;
+      setActiveTimelineStart(initialTimelineStart);
       activeLabels = labelsForMode(initialMode);
       chart = new Chart(canvas, {{
         type: "line",
@@ -4191,10 +4386,21 @@ def build_plot_html(events, child_map, generated_at):
                     const raw = context.raw || {{}};
                     const lines = [];
                     const childLabel = context.dataset.label || "";
-                    const startTime = formatMinuteOfDay(raw.y);
-                    const endTime = raw.endMinute == null ? "" : formatMinuteOfDay(raw.endMinute);
+                    const startTime = formatTimelineMinute(raw.y);
+                    const endTime = raw.endMinute == null ? "" : formatTimelineMinute(raw.endMinute);
                     lines.push(`${{raw.emoji || "•"}} ${{raw.typeLabel || "Event"}}${{childLabel ? ` · ${{childLabel}}` : ""}}`);
-                    lines.push(endTime ? `${{startTime}} to ${{endTime}}` : startTime);
+                    const actualTime = raw.actualEnd
+                      ? `${{raw.actualStart || ""}} to ${{raw.actualEnd}}`
+                      : raw.actualStart || "";
+                    const plottedTime = endTime
+                      ? `${{raw.dayLabel || ""}} ${{startTime}} to ${{endTime}}`
+                      : `${{raw.dayLabel || ""}} ${{startTime}}`;
+                    if (actualTime) {{
+                      lines.push(`Actual: ${{actualTime}}`);
+                    }}
+                    if (plottedTime.trim() && plottedTime.trim() !== actualTime) {{
+                      lines.push(`Plotted: ${{plottedTime.trim()}}`);
+                    }}
                     const valueText = timelineValueText(raw);
                     if (valueText) {{
                       lines.push(valueText);
@@ -4274,7 +4480,7 @@ def build_plot_html(events, child_map, generated_at):
              x: {{
                type: isTimelineMode(initialMode) ? "linear" : "category",
                min: isTimelineMode(initialMode) ? 0 : undefined,
-               max: isTimelineMode(initialMode) ? Math.max(1, timelineDays.length) : undefined,
+               max: isTimelineMode(initialMode) ? Math.max(1, activeTimelineDays.length) : undefined,
                ticks: {{
                   color: "#d2d2d2",
                   autoSkip: false,
@@ -4305,6 +4511,7 @@ def build_plot_html(events, child_map, generated_at):
       chart.$smoothWindow = initialSmoothWindow;
       chart.$splitEnabled = initialSplitEnabled;
       chart.$nightStart = initialNightStart;
+      chart.$timelineStart = initialTimelineStart;
       updateXAxisBounds(chart, initialMode);
       updateYAxisBounds(chart, initialMode);
       if (modeSelect) {{
@@ -4325,6 +4532,9 @@ def build_plot_html(events, child_map, generated_at):
       if (nightStartSelect) {{
         nightStartSelect.value = String(initialNightStart);
       }}
+      if (timelineStartSelect) {{
+        timelineStartSelect.value = String(initialTimelineStart);
+      }}
       updateControlStates(initialMode, initialSplitEnabled, modeSelect, smoothSlider, splitToggle, nightStartSelect, diaperMetricControls, diaperMetricSelect, milkMetricControls, milkMetricSelect);
       updateSmoothingLabel(initialMode, initialSmoothWindow);
       updateSplitLabel(initialSplitEnabled, initialNightStart);
@@ -4342,10 +4552,15 @@ def build_plot_html(events, child_map, generated_at):
       const smoothWindow = chart.$smoothWindow || 1;
       const splitEnabled = currentSplitEnabled();
       const nightStart = currentNightStart();
+      const timelineStart = currentTimelineStart();
       chart.$diaperMetric = diaperMetric;
       chart.$milkMetric = milkMetric;
       chart.$splitEnabled = isTimelineMode(mode) ? false : splitEnabled;
       chart.$nightStart = nightStart;
+      chart.$timelineStart = timelineStart;
+      if (isTimelineMode(mode)) {{
+        setActiveTimelineStart(timelineStart);
+      }}
       activeLabels = labelsForMode(mode);
       chart.data.labels = activeLabels;
       const preservedXRange = options.preserveXRange && chart.scales && chart.scales.x
@@ -4422,6 +4637,12 @@ def build_plot_html(events, child_map, generated_at):
       }});
     }}
 
+    if (timelineStartSelect) {{
+      timelineStartSelect.addEventListener("change", () => {{
+        refreshChart("none", {{ preserveXRange: true }});
+      }});
+    }}
+
     document.getElementById("reset-zoom").addEventListener("click", () => {{
       if (!chart) {{
         return;
@@ -4451,7 +4672,7 @@ def build_plot_html(events, child_map, generated_at):
 <body>
   <div class=\"container\">
     <h1>Plots</h1>
-    <p class=\"subtitle\">Choose a plot (milk totals, diaper counts, feeding gaps, or timeline). Day/Night split uses a 12-hour night window from the selected start time (default 20:00). Drag horizontally to zoom; hold Shift and drag to pan. On diaper plots, dark highlighted dots mark days with at least one blowout.</p>
+    <p class=\"subtitle\">Choose a plot (milk totals, diaper counts, feeding gaps, or timeline). Day/Night split uses a 12-hour night window from the selected start time (default 20:00). Timeline start of day shifts early-morning events onto the previous day. Drag horizontally to zoom; hold Shift and drag to pan. On diaper plots, dark highlighted dots mark days with at least one blowout.</p>
     <div class=\"actions\">
       <a class=\"btn\" href=\"/\">Back to Main View</a>
       <select id=\"series-mode\" class=\"mode-select\" aria-label=\"Series mode\">
@@ -4482,15 +4703,21 @@ def build_plot_html(events, child_map, generated_at):
           <option value=\"dry\">Dry</option>
         </select>
       </label>
-      <label class=\"toggle-label\" for=\"split-day-night\">
+      <label id=\"split-day-night-control\" class=\"toggle-label\" for=\"split-day-night\">
         <input id=\"split-day-night\" type=\"checkbox\" />
         Day/Night Split
       </label>
-      <label for=\"night-start-hour\" class=\"subtitle\">Night starts</label>
+      <label id=\"night-start-label\" for=\"night-start-hour\" class=\"subtitle\">Night starts</label>
       <select id=\"night-start-hour\" class=\"mode-select\" aria-label=\"Night start hour\">
         {night_start_options_html}
       </select>
       <span id=\"day-night-value\" class=\"subtitle\">Split: off</span>
+      <label id=\"timeline-start-controls\" class=\"subtitle\" hidden>
+        Start of day
+        <select id=\"timeline-start-hour\" class=\"mode-select\" aria-label=\"Timeline start of day hour\">
+          {timeline_start_options_html}
+        </select>
+      </label>
       <div class=\"smoothing\">
         <label for=\"smooth-window\" class=\"subtitle\">Smoothing</label>
         <input id=\"smooth-window\" class=\"smooth-slider\" type=\"range\" min=\"1\" max=\"21\" step=\"1\" value=\"1\" />
