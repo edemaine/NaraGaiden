@@ -43,7 +43,7 @@ body {
 
 POOP_ALERT_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000
 ALERT_ICON_HTML = "&#9888;&#65039;"
-DIAPER_PLOT_MODES = ("all", "dirty", "wet", "dry")
+DIAPER_PLOT_MODES = ("all", "dirty", "blowout", "wet", "dry")
 ENV_FILE_NAME = ".env"
 AUTH_HEADER = "X-NaraGaiden-Password"
 AUTH_COOKIE = "naragaiden_auth"
@@ -656,6 +656,8 @@ def diaper_plot_modes_for_event(ev):
     modes = ["all"]
     if payload.get("diaperTypePoop"):
         modes.append("dirty")
+    if diaper_has_blowout(ev):
+        modes.append("blowout")
     if payload.get("diaperTypePee"):
         modes.append("wet")
     if payload.get("diaperTypeDry"):
@@ -1885,6 +1887,8 @@ def milk_totals_by_day(events, child_map):
                 "diaperAllMeta": diaper_meta_display_by_mode["all"],
                 "diaperDirty": diaper_display_by_mode["dirty"],
                 "diaperDirtyMeta": diaper_meta_display_by_mode["dirty"],
+                "diaperBlowout": diaper_display_by_mode["blowout"],
+                "diaperBlowoutMeta": diaper_meta_display_by_mode["blowout"],
                 "diaperWet": diaper_display_by_mode["wet"],
                 "diaperWetMeta": diaper_meta_display_by_mode["wet"],
                 "diaperDry": diaper_display_by_mode["dry"],
@@ -2361,6 +2365,9 @@ def build_plot_html(events, child_map, generated_at):
       if (diaperMetric === "dirty") {{
         return "dirty diapers";
       }}
+      if (diaperMetric === "blowout") {{
+        return "blowouts";
+      }}
       if (diaperMetric === "wet") {{
         return "wet diapers";
       }}
@@ -2428,6 +2435,9 @@ def build_plot_html(events, child_map, generated_at):
       if (diaperMetric === "dirty") {{
         return "diaperDirty";
       }}
+      if (diaperMetric === "blowout") {{
+        return "diaperBlowout";
+      }}
       if (diaperMetric === "wet") {{
         return "diaperWet";
       }}
@@ -2443,6 +2453,9 @@ def build_plot_html(events, child_map, generated_at):
       }}
       if (diaperMetric === "dirty") {{
         return "diaperDirtyMeta";
+      }}
+      if (diaperMetric === "blowout") {{
+        return "diaperBlowoutMeta";
       }}
       if (diaperMetric === "wet") {{
         return "diaperWetMeta";
@@ -2570,7 +2583,7 @@ def build_plot_html(events, child_map, generated_at):
       return output;
     }}
 
-    const diaperPlotModes = ["all", "dirty", "wet", "dry"];
+    const diaperPlotModes = ["all", "dirty", "blowout", "wet", "dry"];
 
     function emptySeries() {{
       return new Array(labels.length).fill(null);
@@ -4699,6 +4712,7 @@ def build_plot_html(events, child_map, generated_at):
         <select id=\"diaper-metric\" class=\"mode-select\" aria-label=\"Diaper type\">
           <option value=\"all\" selected>All</option>
           <option value=\"dirty\">Dirty</option>
+          <option value=\"blowout\">Blowouts</option>
           <option value=\"wet\">Wet</option>
           <option value=\"dry\">Dry</option>
         </select>
