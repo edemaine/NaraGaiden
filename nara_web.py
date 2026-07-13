@@ -1105,6 +1105,9 @@ def build_json(
     medications=None,
     baths=None,
 ):
+    def timestamp_ms(value):
+        return int(value) if value is not None else None
+
     if vitamins is None:
         vitamins = {}
     if medications is None:
@@ -1133,17 +1136,21 @@ def build_json(
                 "bathsToday": bath_count,
                 "feed": {
                     "label": feed_label(feed_ev) if feed_ev else "unknown",
-                    "beginDt": feed_ev.get("beginDt") if feed_ev else None,
+                    "beginDt": timestamp_ms(feed_ev.get("beginDt")) if feed_ev else None,
                 },
                 "diaper": {
                     "label": diaper_label(diaper_ev) if diaper_ev else "unknown",
-                    "beginDt": diaper_ev.get("beginDt") if diaper_ev else None,
+                    "beginDt": timestamp_ms(diaper_ev.get("beginDt")) if diaper_ev else None,
                 },
-                "lastPoopDiaperBeginDt": poopy_diaper_ev.get("beginDt") if poopy_diaper_ev else None,
+                "lastPoopDiaperBeginDt": (
+                    timestamp_ms(poopy_diaper_ev.get("beginDt"))
+                    if poopy_diaper_ev
+                    else None
+                ),
             }
         )
     return {
-        "generatedAt": generated_at,
+        "generatedAt": timestamp_ms(generated_at),
         "children": children,
     }
 
