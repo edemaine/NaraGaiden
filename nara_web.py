@@ -9,6 +9,10 @@ import json
 import logging
 import os
 import re
+import shlex
+import signal
+import subprocess
+import sys
 import threading
 import time
 from typing import Any, Dict, Optional, cast
@@ -20,8 +24,11 @@ from urllib.parse import parse_qs, urlparse
 from nara_live_export import (
     REMOTE_FIREBASE_DB,
     REMOTE_NARA_DB,
+    adb_command,
+    adb_timeout_seconds,
     adb_pull,
     collect_live_data,
+    run,
 )
 
 
@@ -53,6 +60,11 @@ AUTH_THROTTLE_BASE_SECONDS = 1.0
 AUTH_THROTTLE_MAX_SECONDS = 60.0
 AUTH_THROTTLE_RESET_SECONDS = 15 * 60
 HTML_SAFE_JSON_RE = re.compile(r'[&<>\u2028\u2029]')
+INOTIFY_STARTUP_GRACE_SECONDS = 5.0
+INOTIFY_RESTART_DELAY_SECONDS = 2.0
+INOTIFY_DEBOUNCE_SECONDS = 0.5
+SSE_HEARTBEAT_SECONDS = 20.0
+REMOTE_DB_PATHS = (REMOTE_NARA_DB, REMOTE_FIREBASE_DB)
 
 
 def load_env_file(file_path: Path):
@@ -1067,6 +1079,10 @@ def build_html(
         refreshIfStale();
       }
     });
+
+    const eventSource = new EventSource("/events");
+    eventSource.addEventListener("ready", refreshContent);
+    eventSource.addEventListener("changed", refreshContent);
 
     setInterval(refreshContent, REFRESH_INTERVAL_MS);
     """.strip()
@@ -4777,16 +4793,95 @@ class NaraServer(ThreadingHTTPServer):
     cache_data: Optional[Dict[str, Any]]
     cache_time: float
     cache_lock: threading.Lock
+    db_signature: Optional[str]
+    change_condition: threading.Condition
+    data_revision: int
+    sse_client_count: int
+    inotify_stop: threading.Event
+    inotify_process: Optional[subprocess.Popen]
+    inotify_process_lock: threading.Lock
+    inotify_debounce_lock: threading.Lock
+    inotify_debounce_timer: Optional[threading.Timer]
+    inotify_generation: int
+    inotify_status: str
     auth_failures: Dict[str, Dict[str, Any]]
     password_hash: Optional[str]
 
+    def server_close(self):
+        self.inotify_stop.set()
+        with self.inotify_debounce_lock:
+            timer = self.inotify_debounce_timer
+            self.inotify_debounce_timer = None
+        if timer is not None:
+            timer.cancel()
+        with self.inotify_process_lock:
+            process = self.inotify_process
+            self.inotify_process = None
+        stop_inotify_process(process)
+        with self.change_condition:
+            self.change_condition.notify_all()
+        super().server_close()
 
-def fetch_live_data(server):
+
+def stop_inotify_process(process):
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2.0)
+
+
+def inotify_process_group_options():
+    if sys.platform == "cygwin":
+        return {}
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def inotify_exit_was_interrupt(returncode):
+    return returncode in (
+        -signal.SIGINT,
+        128 + signal.SIGINT,
+        -1073741510,
+        0xC000013A,
+    )
+
+
+def stop_server_after_inotify_interrupt(server):
+    server.inotify_status = "stopping"
+    server.inotify_stop.set()
+    with server.change_condition:
+        server.change_condition.notify_all()
+    logging.info("Stopping server after Ctrl-C interrupted inotifyd")
+    server.shutdown()
+
+
+def remote_db_signature(server):
+    paths = []
+    for db_path in REMOTE_DB_PATHS:
+        paths.extend((db_path, f"{db_path}-journal", f"{db_path}-wal"))
+    quoted_paths = " ".join(shlex.quote(path) for path in paths)
+    command = (
+        f"for f in {quoted_paths}; do "
+        "if [ -e \"$f\" ]; then stat -c '%n|%y|%s|%i' \"$f\"; fi; "
+        "done"
+    )
+    return run(
+        adb_command(server.adb_path, server.adb_device, "shell", command),
+        timeout=adb_timeout_seconds(),
+    ).strip()
+
+
+def fetch_live_data(server, force=False):
     now = time.time()
     cache_data = getattr(server, "cache_data", None)
     cache_time = getattr(server, "cache_time", 0.0)
     cache_ttl = getattr(server, "cache_ttl", 0.0)
-    if cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
+    if not force and cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
         return cache_data, False
 
     cache_lock = getattr(server, "cache_lock", None)
@@ -4794,7 +4889,7 @@ def fetch_live_data(server):
         cache_lock = threading.Lock()
         server.cache_lock = cache_lock
 
-    acquired = cache_lock.acquire(blocking=cache_data is None)
+    acquired = cache_lock.acquire(blocking=force or cache_data is None)
     if not acquired:
         return cache_data, True
 
@@ -4803,20 +4898,217 @@ def fetch_live_data(server):
         cache_data = getattr(server, "cache_data", None)
         cache_time = getattr(server, "cache_time", 0.0)
         cache_ttl = getattr(server, "cache_ttl", 0.0)
-        if cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
+        if not force and cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
             return cache_data, False
+
+        if not force and cache_data is not None:
+            try:
+                signature = remote_db_signature(server)
+            except Exception as exc:
+                logging.warning("Could not check Android database signature: %s", exc)
+            else:
+                if signature and signature == getattr(server, "db_signature", None):
+                    server.cache_time = time.time()
+                    return cache_data, False
 
         adb_pull(server.adb_path, REMOTE_NARA_DB, server.nara_db_path, server.adb_device)
         adb_pull(server.adb_path, REMOTE_FIREBASE_DB, server.firebase_db_path, server.adb_device)
         data = collect_live_data(server.nara_db_path, server.firebase_db_path)
         server.cache_data = data
         server.cache_time = time.time()
+        try:
+            server.db_signature = remote_db_signature(server)
+        except Exception as exc:
+            server.db_signature = None
+            logging.warning("Could not record Android database signature: %s", exc)
         return data, False
     finally:
         cache_lock.release()
 
 
+def publish_live_change(server):
+    with server.change_condition:
+        server.data_revision += 1
+        revision = server.data_revision
+        client_count = server.sse_client_count
+        server.change_condition.notify_all()
+    return revision, client_count
+
+
+def refresh_after_inotify(server, generation):
+    with server.inotify_debounce_lock:
+        if generation != server.inotify_generation or server.inotify_stop.is_set():
+            return
+        server.inotify_debounce_timer = None
+    logging.info("Android database changed; refreshing")
+    try:
+        fetch_live_data(server, force=True)
+    except Exception:
+        logging.exception("Failed to refresh data after Android database change")
+        return
+    revision, client_count = publish_live_change(server)
+    logging.info(
+        "Notifying %d browser%s of revision %d",
+        client_count,
+        "" if client_count == 1 else "s",
+        revision,
+    )
+
+
+def schedule_inotify_refresh(server):
+    with server.inotify_debounce_lock:
+        server.inotify_generation += 1
+        generation = server.inotify_generation
+        previous_timer = server.inotify_debounce_timer
+        timer = threading.Timer(
+            INOTIFY_DEBOUNCE_SECONDS,
+            refresh_after_inotify,
+            args=(server, generation),
+        )
+        timer.daemon = True
+        server.inotify_debounce_timer = timer
+        if previous_timer is not None:
+            previous_timer.cancel()
+        timer.start()
+
+
+def start_inotify_process(server):
+    command = adb_command(
+        server.adb_path,
+        server.adb_device,
+        "shell",
+        "inotifyd",
+        "-",
+        *(f"{path}:c" for path in REMOTE_DB_PATHS),
+    )
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        **inotify_process_group_options(),
+    )
+    with server.inotify_process_lock:
+        server.inotify_process = process
+    return process
+
+
+def inotify_monitor_loop(server):
+    initial_attempt = True
+    while not server.inotify_stop.is_set():
+        try:
+            process = start_inotify_process(server)
+        except Exception as exc:
+            if initial_attempt:
+                server.inotify_status = "disabled"
+                logging.warning("Android database notifications disabled: inotifyd failed to start: %s", exc)
+                return
+            logging.warning("Could not restart Android database inotifyd: %s", exc)
+            server.inotify_stop.wait(INOTIFY_RESTART_DELAY_SECONDS)
+            continue
+
+        if server.inotify_stop.wait(INOTIFY_STARTUP_GRACE_SECONDS):
+            if process.poll() is None:
+                process.terminate()
+            return
+
+        if process.poll() is not None:
+            output = process.communicate()[0].strip()
+            if inotify_exit_was_interrupt(process.returncode):
+                stop_server_after_inotify_interrupt(server)
+                return
+            if initial_attempt:
+                server.inotify_status = "disabled"
+                detail = f": {output}" if output else ""
+                logging.warning("Android database notifications disabled: inotifyd failed to start%s", detail)
+                return
+            logging.warning("Android database inotifyd restart failed%s", f": {output}" if output else "")
+            server.inotify_stop.wait(INOTIFY_RESTART_DELAY_SECONDS)
+            continue
+
+        if initial_attempt:
+            initial_attempt = False
+            server.inotify_status = "running"
+            logging.info("Watching Android databases for changes with inotifyd")
+        else:
+            server.inotify_status = "running"
+            logging.info("Restarted Android database inotifyd")
+
+        if process.stdout is not None:
+            for line in process.stdout:
+                if server.inotify_stop.is_set():
+                    break
+                if any(path in line for path in REMOTE_DB_PATHS):
+                    schedule_inotify_refresh(server)
+
+        returncode = process.wait()
+
+        if server.inotify_stop.is_set():
+            return
+
+        if inotify_exit_was_interrupt(returncode):
+            stop_server_after_inotify_interrupt(server)
+            return
+
+        server.inotify_status = "restarting"
+        logging.warning("Android database inotifyd stopped; retrying")
+        server.inotify_stop.wait(INOTIFY_RESTART_DELAY_SECONDS)
+
+
+def initialize_live_updates(server):
+    try:
+        fetch_live_data(server, force=True)
+    except Exception:
+        logging.exception("Initial Android database refresh failed")
+    inotify_monitor_loop(server)
+
+
+def start_live_updates(server):
+    thread = threading.Thread(
+        target=initialize_live_updates,
+        args=(server,),
+        name="nara-live-updates",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 class Handler(BaseHTTPRequestHandler):
+    def send_event_stream(self, server):
+        with server.change_condition:
+            server.sse_client_count += 1
+            revision = server.data_revision
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self.wfile.write(f"event: ready\ndata: {revision}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+            while not server.inotify_stop.is_set():
+                with server.change_condition:
+                    server.change_condition.wait_for(
+                        lambda: server.data_revision != revision or server.inotify_stop.is_set(),
+                        timeout=SSE_HEARTBEAT_SECONDS,
+                    )
+                    next_revision = server.data_revision
+                if server.inotify_stop.is_set():
+                    return
+                if next_revision != revision:
+                    revision = next_revision
+                    message = f"event: changed\ndata: {revision}\n\n"
+                else:
+                    message = ": keepalive\n\n"
+                self.wfile.write(message.encode("utf-8"))
+                self.wfile.flush()
+        finally:
+            with server.change_condition:
+                server.sse_client_count -= 1
+
     def send_unauthorized(self, html_page=False):
         if html_page:
             body_bytes = build_auth_html(self.path or "/").encode("utf-8")
@@ -4917,7 +5209,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", "/plot")
             self.end_headers()
             return
-        if parsed.path not in ("/", "/index.html", "/json", "/plot", "/plot.html"):
+        if parsed.path not in ("/", "/index.html", "/json", "/events", "/plot", "/plot.html"):
             self.send_response(404)
             self.end_headers()
             return
@@ -4926,11 +5218,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_rate_limited(wait_seconds)
             return
         if auth_status != "authorized":
-            self.send_unauthorized(html_page=parsed.path != "/json")
+            self.send_unauthorized(html_page=parsed.path not in ("/json", "/events"))
             return
 
         try:
             server = cast(NaraServer, self.server)
+            if parsed.path == "/events":
+                self.send_event_stream(server)
+                return
             data, _is_stale = fetch_live_data(server)
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
@@ -5041,12 +5336,29 @@ def main():
     server.cache_data = None
     server.cache_time = 0.0
     server.cache_lock = threading.Lock()
+    server.db_signature = None
+    server.change_condition = threading.Condition()
+    server.data_revision = 0
+    server.sse_client_count = 0
+    server.inotify_stop = threading.Event()
+    server.inotify_process = None
+    server.inotify_process_lock = threading.Lock()
+    server.inotify_debounce_lock = threading.Lock()
+    server.inotify_debounce_timer = None
+    server.inotify_generation = 0
+    server.inotify_status = "starting"
     server.auth_failures = {}
     server.password_hash = password_digest(server_password) if server_password else None
 
     print(f"Serving on http://{args.host}:{args.port}")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server.serve_forever()
+    start_live_updates(server)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logging.info("Stopping server")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

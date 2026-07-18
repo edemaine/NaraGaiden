@@ -32,7 +32,7 @@ Set `NARA_PASSWORD` in the environment or a local `.env` file if you want protec
   * 💉 for medication
   * 🛁 for baths
   * Repeat multiple times if given multiple times in the day
-* Automatically updates every minute
+* Updates immediately when the emulator database changes, and every minute
 
 Open with `chrome --app=http://192.168.2.1:8888`
 to get a window with no location bar or other chrome.
@@ -88,7 +88,9 @@ to get a window with no location bar or other chrome.
 
 1. Nara Baby runs inside an Android emulator on the server.
 2. `nara_live_export.py` uses ADB to pull data from the emulator and produce JSON.
-3. `nara_web.py` serves the JSON and a simple web UI.
+3. `nara_web.py` watches the emulator databases with `inotifyd`, uses lightweight
+   `stat` checks as a fallback, serves JSON to apps, and serves an SSE-enabled web
+   app to browsers.
 4. Android phone app/widget polls the `/json` endpoint and syncs snapshots to the Wear OS app/tile.
 5. iOS app/widget polls the `/json` endpoint and renders the overview.
 
