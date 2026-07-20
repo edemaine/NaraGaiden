@@ -4803,6 +4803,7 @@ class NaraServer(ThreadingHTTPServer):
     inotify_debounce_lock: threading.Lock
     inotify_debounce_timer: Optional[threading.Timer]
     inotify_generation: int
+    cache_dirty: bool
     inotify_status: str
     auth_failures: Dict[str, Dict[str, Any]]
     password_hash: Optional[str]
@@ -4876,12 +4877,37 @@ def remote_db_signature(server):
     ).strip()
 
 
+def cache_dirty_snapshot(server):
+    lock = getattr(server, "inotify_debounce_lock", None)
+    if lock is None:
+        return getattr(server, "cache_dirty", False), getattr(server, "inotify_generation", 0)
+    with lock:
+        return getattr(server, "cache_dirty", False), server.inotify_generation
+
+
+def mark_cache_clean(server, refresh_generation):
+    lock = getattr(server, "inotify_debounce_lock", None)
+    if lock is None:
+        server.cache_dirty = False
+        return
+    with lock:
+        if server.inotify_generation == refresh_generation:
+            server.cache_dirty = False
+
+
 def fetch_live_data(server, force=False):
     now = time.time()
     cache_data = getattr(server, "cache_data", None)
     cache_time = getattr(server, "cache_time", 0.0)
     cache_ttl = getattr(server, "cache_ttl", 0.0)
-    if not force and cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
+    cache_dirty, _ = cache_dirty_snapshot(server)
+    if (
+        not force
+        and not cache_dirty
+        and cache_data is not None
+        and cache_ttl > 0
+        and (now - cache_time) < cache_ttl
+    ):
         return cache_data, False
 
     cache_lock = getattr(server, "cache_lock", None)
@@ -4889,7 +4915,7 @@ def fetch_live_data(server, force=False):
         cache_lock = threading.Lock()
         server.cache_lock = cache_lock
 
-    acquired = cache_lock.acquire(blocking=force or cache_data is None)
+    acquired = cache_lock.acquire(blocking=force or cache_dirty or cache_data is None)
     if not acquired:
         return cache_data, True
 
@@ -4898,10 +4924,17 @@ def fetch_live_data(server, force=False):
         cache_data = getattr(server, "cache_data", None)
         cache_time = getattr(server, "cache_time", 0.0)
         cache_ttl = getattr(server, "cache_ttl", 0.0)
-        if not force and cache_data is not None and cache_ttl > 0 and (now - cache_time) < cache_ttl:
+        cache_dirty, refresh_generation = cache_dirty_snapshot(server)
+        if (
+            not force
+            and not cache_dirty
+            and cache_data is not None
+            and cache_ttl > 0
+            and (now - cache_time) < cache_ttl
+        ):
             return cache_data, False
 
-        if not force and cache_data is not None:
+        if not force and not cache_dirty and cache_data is not None:
             try:
                 signature = remote_db_signature(server)
             except Exception as exc:
@@ -4921,6 +4954,7 @@ def fetch_live_data(server, force=False):
         except Exception as exc:
             server.db_signature = None
             logging.warning("Could not record Android database signature: %s", exc)
+        mark_cache_clean(server, refresh_generation)
         return data, False
     finally:
         cache_lock.release()
@@ -4940,9 +4974,13 @@ def refresh_after_inotify(server, generation):
         if generation != server.inotify_generation or server.inotify_stop.is_set():
             return
         server.inotify_debounce_timer = None
-    logging.info("Android database changed; refreshing")
+        cache_dirty = server.cache_dirty
+    if cache_dirty:
+        logging.info("Android database changed; refreshing")
+    else:
+        logging.info("Android database change already refreshed by a client request")
     try:
-        fetch_live_data(server, force=True)
+        fetch_live_data(server)
     except Exception:
         logging.exception("Failed to refresh data after Android database change")
         return
@@ -4957,6 +4995,7 @@ def refresh_after_inotify(server, generation):
 
 def schedule_inotify_refresh(server):
     with server.inotify_debounce_lock:
+        server.cache_dirty = True
         server.inotify_generation += 1
         generation = server.inotify_generation
         previous_timer = server.inotify_debounce_timer
@@ -5346,6 +5385,7 @@ def main():
     server.inotify_debounce_lock = threading.Lock()
     server.inotify_debounce_timer = None
     server.inotify_generation = 0
+    server.cache_dirty = False
     server.inotify_status = "starting"
     server.auth_failures = {}
     server.password_hash = password_digest(server_password) if server_password else None

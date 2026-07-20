@@ -41,6 +41,9 @@ class LiveUpdateTest(unittest.TestCase):
             cache_time=0,
             cache_lock=threading.Lock(),
             db_signature="same",
+            inotify_debounce_lock=threading.Lock(),
+            inotify_generation=0,
+            cache_dirty=False,
         )
 
     def make_inotify_server(self):
@@ -53,6 +56,7 @@ class LiveUpdateTest(unittest.TestCase):
             inotify_debounce_lock=threading.Lock(),
             inotify_debounce_timer=None,
             inotify_generation=0,
+            cache_dirty=False,
             inotify_status="starting",
             change_condition=threading.Condition(),
             data_revision=0,
@@ -85,6 +89,24 @@ class LiveUpdateTest(unittest.TestCase):
         self.assertEqual(adb_pull.call_count, 2)
         collect.assert_called_once_with("nara.db", "firebase.db")
         self.assertEqual(server.db_signature, "after-pull")
+
+    @mock.patch("nara_web.collect_live_data", return_value={"fresh": True})
+    @mock.patch("nara_web.adb_pull")
+    @mock.patch("nara_web.remote_db_signature", return_value="after-pull")
+    def test_detected_change_bypasses_fresh_cache(self, signature, adb_pull, collect):
+        server = self.make_cache_server()
+        server.cache_time = nara_web.time.time()
+        server.cache_dirty = True
+        server.inotify_generation = 3
+
+        data, stale = nara_web.fetch_live_data(server)
+
+        self.assertEqual(data, {"fresh": True})
+        self.assertFalse(stale)
+        self.assertEqual(adb_pull.call_count, 2)
+        collect.assert_called_once_with("nara.db", "firebase.db")
+        signature.assert_called_once_with(server)
+        self.assertFalse(server.cache_dirty)
 
     def test_initial_inotify_start_failure_disables_notifications(self):
         server = self.make_inotify_server()
@@ -125,19 +147,49 @@ class LiveUpdateTest(unittest.TestCase):
         self.assertNotEqual(server.inotify_status, "disabled")
 
     @mock.patch("nara_web.fetch_live_data")
-    def test_inotify_refresh_forces_pull_and_publishes_revision(self, fetch):
+    def test_inotify_refreshes_and_publishes_revision(self, fetch):
         server = self.make_inotify_server()
         server.inotify_generation = 4
+        server.cache_dirty = True
         server.inotify_debounce_timer = mock.Mock()
 
         with self.assertLogs(level="INFO") as logs:
             nara_web.refresh_after_inotify(server, 4)
 
-        fetch.assert_called_once_with(server, force=True)
+        fetch.assert_called_once_with(server)
         self.assertIsNone(server.inotify_debounce_timer)
         self.assertEqual(server.data_revision, 1)
         self.assertIn("Android database changed; refreshing", logs.output[0])
         self.assertIn("Notifying 2 browsers of revision 1", logs.output[1])
+
+    @mock.patch("nara_web.adb_pull")
+    def test_debounce_only_publishes_when_client_already_refreshed(self, adb_pull):
+        server = self.make_cache_server()
+        server.cache_time = nara_web.time.time()
+        server.inotify_generation = 4
+        server.inotify_stop = threading.Event()
+        server.inotify_debounce_timer = mock.Mock()
+        server.change_condition = threading.Condition()
+        server.data_revision = 0
+        server.sse_client_count = 2
+
+        with self.assertLogs(level="INFO") as logs:
+            nara_web.refresh_after_inotify(server, 4)
+
+        adb_pull.assert_not_called()
+        self.assertEqual(server.data_revision, 1)
+        self.assertIn("already refreshed by a client request", logs.output[0])
+        self.assertIn("Notifying 2 browsers of revision 1", logs.output[1])
+
+    @mock.patch("nara_web.threading.Timer")
+    def test_inotify_event_immediately_marks_cache_dirty(self, timer):
+        server = self.make_inotify_server()
+
+        nara_web.schedule_inotify_refresh(server)
+
+        self.assertTrue(server.cache_dirty)
+        self.assertEqual(server.inotify_generation, 1)
+        timer.return_value.start.assert_called_once_with()
 
     @mock.patch("nara_web.subprocess.Popen")
     def test_inotify_watches_for_modifications(self, popen):
