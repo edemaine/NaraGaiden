@@ -5269,7 +5269,9 @@ class Handler(BaseHTTPRequestHandler):
             latest_feed = latest_by_group(data.get("events", []), "FEED")
             latest_diaper = latest_by_group(data.get("events", []), "DIAPER")
             latest_poopy = latest_poopy_diapers(data.get("events", []))
-            generated_at = data.get("generatedAt", int(time.time() * 1000))
+            # "as of" describes this successful response, not when the cached
+            # database snapshot last changed.
+            generated_at = int(time.time() * 1000)
             vitamins = routine_counts_today(data.get("events", []), ["vitamin"])
             medications = routine_counts_today(data.get("events", []), ["medication", "medicine"])
             baths = routine_counts_today(data.get("events", []), ["bath"])

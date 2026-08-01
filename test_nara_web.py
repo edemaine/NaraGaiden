@@ -1,3 +1,5 @@
+import io
+import json
 import threading
 import unittest
 from types import SimpleNamespace
@@ -256,6 +258,32 @@ class LiveUpdateTest(unittest.TestCase):
         self.assertIn('new EventSource("/events")', page)
         self.assertIn('addEventListener("ready", refreshContent)', page)
         self.assertIn('addEventListener("changed", refreshContent)', page)
+
+    @mock.patch("nara_web.fetch_live_data")
+    def test_json_generated_at_is_response_time_not_cached_snapshot_time(self, fetch):
+        fetch.return_value = (
+            {
+                "events": [],
+                "children": {},
+                "generatedAt": 1000,
+            },
+            False,
+        )
+        handler = SimpleNamespace(
+            path="/json",
+            headers={},
+            server=SimpleNamespace(password_hash=None),
+            wfile=io.BytesIO(),
+            send_response=mock.Mock(),
+            send_header=mock.Mock(),
+            end_headers=mock.Mock(),
+        )
+
+        with mock.patch("nara_web.time.time", return_value=1785510123.456):
+            nara_web.Handler.do_GET(handler)
+
+        payload = json.loads(handler.wfile.getvalue())
+        self.assertEqual(payload["generatedAt"], 1785510123456)
 
 
 if __name__ == "__main__":
