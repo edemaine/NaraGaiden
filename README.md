@@ -64,14 +64,27 @@ to get a window with no location bar or other chrome.
 5. Optional: Try running the exporter:
    - `python nara_live_export.py`
    - Optionally set `ADB_DEVICE` to target the specific emulator/device.
-6. Optional: create a local `.env` from `.env.example` and set `NARA_PASSWORD`
-   and/or other settings; `.env` is ignored by Git, so it stays local.
+6. Optional: create a local `.env` from `.env.example` and set settings.
+   (`.env` is ignored by Git, so it stays local.)
+   In particular:
+    - Set `NARA_PASSWORD` if your server will be accessible outside your LAN.
+    - To avoid having to start the Android emulator manually all the time,
+      set `NARA_EMULATOR_AVD` to the name printed by `emulator -list-avds`
+      (after running it once yourself and signing in).
 7. Run the server:
     - `python nara_web.py --host 0.0.0.0 --port 8888 --adb-device emulator-5554`
     - (`--adb-device` should match whatever `adb devices` lists)
     - Settings can also be set via environment variables or a local `.env` file.
     - If pulling the app database fails with `Permission denied`,
       the server runs `adb root`, as needed to pull the Nara database.
+    - If you set `NARA_EMULATOR_AVD` or pass `--emulator-avd NAME`,
+      the server will launch (if needed) and supervise this Android emulator,
+      defaulting to headless audio-free operation.
+      The server waits for Android to boot, keeps
+      `com.naraorganics.nara` in the foreground,
+      restarts ADB after repeated failures, and
+      restarts an emulator it launched if ADB recovery fails.
+      See `.env.example` for optional arguments, intervals, and thresholds.
 8. Connect web browser to `localhost:8888` (or modify to your IP address)
     for the web view.
    If `NARA_PASSWORD` is set, browsers will prompt for the password once and remember it locally.

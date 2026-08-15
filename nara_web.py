@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -65,6 +66,19 @@ INOTIFY_RESTART_DELAY_SECONDS = 2.0
 INOTIFY_DEBOUNCE_SECONDS = 0.5
 SSE_HEARTBEAT_SECONDS = 20.0
 REMOTE_DB_PATHS = (REMOTE_NARA_DB, REMOTE_FIREBASE_DB)
+DEFAULT_NARA_APP_PACKAGE = "com.naraorganics.nara"
+DEFAULT_EMULATOR_CHECK_INTERVAL_SECONDS = 60.0
+DEFAULT_EMULATOR_FAILURE_THRESHOLD = 3
+DEFAULT_EMULATOR_BOOT_TIMEOUT_SECONDS = 180.0
+EMULATOR_STARTUP_CHECK_INTERVAL_SECONDS = 2.0
+DEFAULT_EMULATOR_ARGS = ("-no-window", "-no-audio", "-no-boot-anim")
+EMULATOR_BOOTING_PROBLEM = "Android has not finished booting"
+ANDROID_WATCHDOG_COMMAND = (
+    "printf 'NARA_BOOT='; getprop sys.boot_completed; "
+    "dumpsys activity activities | "
+    "grep -m 1 -E 'mResumedActivity|topResumedActivity|ResumedActivity|mFocusedApp' "
+    "|| true"
+)
 
 
 def load_env_file(file_path: Path):
@@ -4807,9 +4821,26 @@ class NaraServer(ThreadingHTTPServer):
     inotify_status: str
     auth_failures: Dict[str, Dict[str, Any]]
     password_hash: Optional[str]
+    emulator_avd: Optional[str]
+    emulator_path: Optional[str]
+    emulator_args: list[str]
+    emulator_app_package: str
+    emulator_check_interval: float
+    emulator_failure_threshold: int
+    emulator_boot_timeout: float
+    emulator_process: Optional[subprocess.Popen]
+    emulator_process_lock: threading.Lock
+    emulator_boot_started_at: Optional[float]
+    emulator_ready: threading.Event
+    emulator_check_wakeup: threading.Event
+    live_data_ready: threading.Event
+    emulator_owned: bool
+    emulator_adopted: bool
 
     def server_close(self):
         self.inotify_stop.set()
+        self.emulator_check_wakeup.set()
+        self.live_data_ready.set()
         with self.inotify_debounce_lock:
             timer = self.inotify_debounce_timer
             self.inotify_debounce_timer = None
@@ -4819,6 +4850,7 @@ class NaraServer(ThreadingHTTPServer):
             process = self.inotify_process
             self.inotify_process = None
         stop_inotify_process(process)
+        stop_managed_emulator(self)
         with self.change_condition:
             self.change_condition.notify_all()
         super().server_close()
@@ -4852,13 +4884,445 @@ def inotify_exit_was_interrupt(returncode):
     )
 
 
-def stop_server_after_inotify_interrupt(server):
+def android_sdk_roots():
+    sdk_roots = []
+    for variable in ("ANDROID_SDK_ROOT", "ANDROID_HOME"):
+        sdk_root = os.environ.get(variable)
+        if sdk_root:
+            sdk_roots.append(Path(sdk_root))
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        sdk_roots.append(Path(local_app_data) / "Android" / "Sdk")
+    sdk_roots.extend(
+        (
+            Path.home() / "Library" / "Android" / "sdk",
+            Path.home() / "Android" / "Sdk",
+        )
+    )
+    return sdk_roots
+
+
+def resolve_adb_path(adb_path="adb"):
+    if Path(adb_path).is_file():
+        return adb_path
+    from_path = shutil.which(adb_path)
+    if from_path:
+        return from_path
+    executable_name = "adb.exe" if os.name == "nt" else "adb"
+    for sdk_root in android_sdk_roots():
+        candidate = sdk_root / "platform-tools" / executable_name
+        if candidate.is_file():
+            return str(candidate)
+    return adb_path
+
+
+def resolve_emulator_path(adb_path="adb"):
+    configured = os.environ.get("NARA_EMULATOR_PATH")
+    if configured:
+        return configured
+
+    executable_name = "emulator.exe" if os.name == "nt" else "emulator"
+    from_path = shutil.which("emulator")
+    if from_path:
+        return from_path
+
+    for sdk_root in android_sdk_roots():
+        candidate = sdk_root / "emulator" / executable_name
+        if candidate.is_file():
+            return str(candidate)
+
+    resolved_adb = shutil.which(adb_path) if not Path(adb_path).is_file() else adb_path
+    if resolved_adb:
+        candidate = Path(resolved_adb).resolve().parent.parent / "emulator" / executable_name
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def parse_emulator_args(value):
+    if not value:
+        return []
+    return shlex.split(value, posix=os.name != "nt")
+
+
+def configured_emulator_args():
+    value = os.environ.get("NARA_EMULATOR_ARGS")
+    if value is None:
+        return list(DEFAULT_EMULATOR_ARGS)
+    return parse_emulator_args(value)
+
+
+def positive_float_setting(name, default):
+    value = os.environ.get(name, str(default))
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid {name} value: {value!r}") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"{name} must be positive: {value!r}")
+    return parsed
+
+
+def positive_int_setting(name, default):
+    value = os.environ.get(name, str(default))
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid {name} value: {value!r}") from exc
+    if parsed <= 0:
+        raise RuntimeError(f"{name} must be positive: {value!r}")
+    return parsed
+
+
+def emulator_process_group_options():
+    if sys.platform == "cygwin":
+        return {}
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def managed_emulator_process(server):
+    with server.emulator_process_lock:
+        return server.emulator_process
+
+
+def start_managed_emulator(server):
+    current = managed_emulator_process(server)
+    if current is not None and current.poll() is None:
+        return current
+    if not server.emulator_path:
+        raise RuntimeError(
+            "Could not find the Android emulator executable; set NARA_EMULATOR_PATH"
+        )
+
+    command = [server.emulator_path, "-avd", server.emulator_avd, *server.emulator_args]
+    logging.info("Starting Android emulator AVD %s", server.emulator_avd)
+    if sys.platform == "cygwin":
+        cygstart_path = shutil.which("cygstart") or "cygstart"
+        run(
+            [cygstart_path, "--hide", *command],
+            timeout=adb_timeout_seconds(),
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        with server.emulator_process_lock:
+            server.emulator_process = None
+            server.emulator_boot_started_at = time.monotonic()
+            server.emulator_owned = True
+            server.emulator_adopted = False
+        return None
+
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        **emulator_process_group_options(),
+    )
+    with server.emulator_process_lock:
+        server.emulator_process = process
+        server.emulator_boot_started_at = time.monotonic()
+        server.emulator_owned = True
+        server.emulator_adopted = False
+    thread = threading.Thread(
+        target=managed_emulator_monitor_loop,
+        args=(server, process),
+        name="nara-emulator-process",
+        daemon=True,
+    )
+    thread.start()
+    return process
+
+
+def wait_for_process_exit(process, timeout=10.0):
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2.0)
+
+
+def stop_managed_emulator(server, use_adb=True):
+    lock = getattr(server, "emulator_process_lock", None)
+    if lock is None:
+        return
+    with lock:
+        process = server.emulator_process
+        server.emulator_process = None
+        owned = server.emulator_owned
+        server.emulator_owned = False
+        if owned:
+            server.emulator_adopted = False
+    if process is None and not owned:
+        return
+
+    if use_adb:
+        try:
+            run(
+                adb_command(server.adb_path, server.adb_device, "emu", "kill"),
+                timeout=min(adb_timeout_seconds(), 5.0),
+            )
+        except Exception as exc:
+            logging.warning("Could not stop Android emulator through ADB: %s", exc)
+    if process is not None and process.poll() is None:
+        wait_for_process_exit(process)
+
+
+def adb_supervisor_run(server, *args):
+    return run(
+        adb_command(server.adb_path, server.adb_device, *args),
+        timeout=adb_timeout_seconds(),
+    )
+
+
+def foreground_package_from_watchdog_output(output):
+    patterns = (
+        r"(?:mResumedActivity|topResumedActivity|ResumedActivity)[^\n]*?\s([A-Za-z0-9._]+)/",
+        r"mFocusedApp[^\n]*?\s([A-Za-z0-9._]+)/",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, output)
+        if match:
+            return match.group(1)
+    return None
+
+
+def emulator_watchdog_status(server):
+    output = adb_supervisor_run(server, "shell", ANDROID_WATCHDOG_COMMAND)
+    boot_match = re.search(r"^NARA_BOOT=(.*)$", output, re.MULTILINE)
+    if boot_match is None:
+        raise RuntimeError("Android watchdog response did not include boot status")
+    if boot_match.group(1).strip() != "1":
+        return EMULATOR_BOOTING_PROBLEM, None
+    return None, foreground_package_from_watchdog_output(output)
+
+
+def emulator_health_problem(server):
+    problem, _foreground_package = emulator_watchdog_status(server)
+    return problem
+
+
+def foreground_android_package(server):
+    _problem, foreground_package = emulator_watchdog_status(server)
+    return foreground_package
+
+
+def launch_nara_android_app(server):
+    package = server.emulator_app_package
+    logging.info("Launching Android app %s", package)
+    output = adb_supervisor_run(
+        server,
+        "shell",
+        "monkey",
+        "-p",
+        package,
+        "-c",
+        "android.intent.category.LAUNCHER",
+        "1",
+    )
+    if "No activities found" in output or "monkey aborted" in output.lower():
+        raise RuntimeError(f"Android app {package} has no launchable activity")
+
+
+def print_adopted_emulator_stop_message(server):
+    if not getattr(server, "emulator_adopted", False):
+        return
+    command = shlex.join(
+        adb_command(server.adb_path, server.adb_device, "emu", "kill")
+    )
+    print("Android emulator left running because it was already running when the server started.")
+    print(f"Stop it if desired with: {command}")
+
+
+def managed_emulator_monitor_loop(server, process):
+    while not server.inotify_stop.is_set():
+        returncode = process.poll()
+        if returncode is not None:
+            with server.emulator_process_lock:
+                is_current = server.emulator_process is process
+            if not is_current:
+                return
+            if inotify_exit_was_interrupt(returncode):
+                stop_server_after_child_interrupt(server, "Android emulator")
+            else:
+                request_emulator_health_check(server)
+            return
+        server.inotify_stop.wait(0.25)
+
+
+def recover_adb(server):
+    logging.warning("Restarting the ADB server after repeated health-check failures")
+    timeout = adb_timeout_seconds()
+    run([server.adb_path, "kill-server"], timeout=timeout)
+    run([server.adb_path, "start-server"], timeout=timeout)
+
+
+def restart_managed_emulator(server):
+    try:
+        recover_adb(server)
+        if emulator_health_problem(server) is None:
+            logging.info("Android device recovered after restarting ADB")
+            return
+    except Exception as exc:
+        logging.warning("ADB recovery did not restore the Android device: %s", exc)
+
+    logging.warning("Restarting Android emulator AVD %s", server.emulator_avd)
+    process = managed_emulator_process(server)
+    if not server.emulator_owned and (
+        process is None or process.poll() is not None
+    ):
+        # The server may have adopted an already-running emulator. Try to stop
+        # the configured ADB target before starting another copy of its AVD.
+        try:
+            adb_supervisor_run(server, "emu", "kill")
+        except Exception as exc:
+            logging.warning("Could not stop the existing Android emulator: %s", exc)
+    stop_managed_emulator(server)
+    if server.inotify_stop.wait(2.0):
+        return
+    start_managed_emulator(server)
+
+
+def emulator_supervisor_loop(server):
+    failures = 0
+    ever_ready = False
+    observed_boot_start = None
+    while not server.inotify_stop.is_set():
+        process = managed_emulator_process(server)
+        process_exited = process is not None and process.poll() is not None
+        try:
+            problem, foreground_package = emulator_watchdog_status(server)
+        except Exception as exc:
+            problem = str(exc)
+            foreground_package = None
+        if server.inotify_stop.is_set():
+            return
+
+        if problem is not None:
+            server.emulator_ready.clear()
+            now = time.monotonic()
+            if problem == EMULATOR_BOOTING_PROBLEM and observed_boot_start is None:
+                observed_boot_start = now
+            managed_start = getattr(server, "emulator_boot_started_at", None)
+            startup_start = managed_start or (observed_boot_start if not ever_ready else None)
+            within_startup_grace = (
+                not process_exited
+                and startup_start is not None
+                and now - startup_start < server.emulator_boot_timeout
+            )
+            if within_startup_grace:
+                failures = 0
+                logging.info("Waiting for Android emulator AVD %s to boot", server.emulator_avd)
+                startup_interval = min(
+                    server.emulator_check_interval,
+                    EMULATOR_STARTUP_CHECK_INTERVAL_SECONDS,
+                )
+                if server.emulator_check_wakeup.wait(startup_interval):
+                    server.emulator_check_wakeup.clear()
+                continue
+            failures += 1
+            logging.warning(
+                "Android emulator health check failed (%d/%d): %s",
+                failures,
+                server.emulator_failure_threshold,
+                problem,
+            )
+            try:
+                if process_exited or (
+                    process is None
+                    and not server.emulator_owned
+                    and not ever_ready
+                    and problem != EMULATOR_BOOTING_PROBLEM
+                ):
+                    start_managed_emulator(server)
+                    failures = 0
+                elif failures >= server.emulator_failure_threshold:
+                    restart_managed_emulator(server)
+                    failures = 0
+            except Exception:
+                logging.exception("Could not start or restart the Android emulator")
+        else:
+            failures = 0
+            observed_boot_start = None
+            try:
+                if foreground_package != server.emulator_app_package:
+                    logging.warning(
+                        "Foreground Android app is %s; expected %s",
+                        foreground_package or "unknown",
+                        server.emulator_app_package,
+                    )
+                    launch_nara_android_app(server)
+                server.emulator_ready.set()
+                ever_ready = True
+                server.emulator_boot_started_at = None
+                if (
+                    not server.emulator_owned
+                    and not server.emulator_adopted
+                    and managed_emulator_process(server) is None
+                ):
+                    server.emulator_adopted = True
+            except Exception:
+                server.emulator_ready.clear()
+                logging.exception("Could not verify or launch the Nara Android app")
+
+        wait_interval = server.emulator_check_interval
+        current_process = managed_emulator_process(server)
+        if (
+            server.emulator_boot_started_at is not None
+            and (
+                server.emulator_owned
+                or (current_process is not None and current_process.poll() is None)
+            )
+        ):
+            wait_interval = min(wait_interval, EMULATOR_STARTUP_CHECK_INTERVAL_SECONDS)
+        if server.emulator_check_wakeup.wait(wait_interval):
+            server.emulator_check_wakeup.clear()
+
+
+def start_emulator_supervisor(server):
+    if not server.emulator_avd:
+        server.emulator_ready.set()
+        return None
+    thread = threading.Thread(
+        target=emulator_supervisor_loop,
+        args=(server,),
+        name="nara-emulator-supervisor",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def request_emulator_health_check(server):
+    wakeup = getattr(server, "emulator_check_wakeup", None)
+    if wakeup is not None:
+        wakeup.set()
+
+
+def stop_server_after_child_interrupt(server, child_name):
     server.inotify_status = "stopping"
     server.inotify_stop.set()
+    emulator_wakeup = getattr(server, "emulator_check_wakeup", None)
+    if emulator_wakeup is not None:
+        emulator_wakeup.set()
+    live_data_ready = getattr(server, "live_data_ready", None)
+    if live_data_ready is not None:
+        live_data_ready.set()
     with server.change_condition:
         server.change_condition.notify_all()
-    logging.info("Stopping server after Ctrl-C interrupted inotifyd")
+    logging.info("Stopping server after Ctrl-C interrupted %s", child_name)
     server.shutdown()
+
+
+def stop_server_after_inotify_interrupt(server):
+    stop_server_after_child_interrupt(server, "inotifyd")
 
 
 def remote_db_signature(server):
@@ -4949,6 +5413,9 @@ def fetch_live_data(server, force=False):
         data = collect_live_data(server.nara_db_path, server.firebase_db_path)
         server.cache_data = data
         server.cache_time = time.time()
+        ready_event = getattr(server, "live_data_ready", None)
+        if ready_event is not None:
+            ready_event.set()
         try:
             server.db_signature = remote_db_signature(server)
         except Exception as exc:
@@ -5062,6 +5529,7 @@ def inotify_monitor_loop(server):
                 detail = f": {output}" if output else ""
                 logging.warning("Android database notifications disabled: inotifyd failed to start%s", detail)
                 return
+            request_emulator_health_check(server)
             logging.warning("Android database inotifyd restart failed%s", f": {output}" if output else "")
             server.inotify_stop.wait(INOTIFY_RESTART_DELAY_SECONDS)
             continue
@@ -5090,16 +5558,30 @@ def inotify_monitor_loop(server):
             stop_server_after_inotify_interrupt(server)
             return
 
+        request_emulator_health_check(server)
         server.inotify_status = "restarting"
         logging.warning("Android database inotifyd stopped; retrying")
         server.inotify_stop.wait(INOTIFY_RESTART_DELAY_SECONDS)
 
 
 def initialize_live_updates(server):
-    try:
-        fetch_live_data(server, force=True)
-    except Exception:
-        logging.exception("Initial Android database refresh failed")
+    if getattr(server, "emulator_avd", None):
+        logging.info("Waiting for the supervised Android emulator")
+        while not server.inotify_stop.is_set() and not server.emulator_ready.wait(1.0):
+            pass
+        if server.inotify_stop.is_set():
+            return
+    while not server.inotify_stop.is_set():
+        try:
+            fetch_live_data(server, force=True)
+            break
+        except Exception:
+            logging.exception("Initial Android database refresh failed")
+            if not getattr(server, "emulator_avd", None):
+                break
+            request_emulator_health_check(server)
+            if server.inotify_stop.wait(5.0):
+                return
     inotify_monitor_loop(server)
 
 
@@ -5125,6 +5607,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
+            if getattr(server, "emulator_avd", None):
+                while not server.live_data_ready.is_set():
+                    if server.inotify_stop.is_set():
+                        return
+                    self.wfile.write(b": waiting for Android emulator\n\n")
+                    self.wfile.flush()
+                    server.live_data_ready.wait(SSE_HEARTBEAT_SECONDS)
+                if server.inotify_stop.is_set():
+                    return
             self.wfile.write(f"event: ready\ndata: {revision}\n\n".encode("utf-8"))
             self.wfile.flush()
 
@@ -5179,6 +5670,25 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Retry-After", str(retry_after))
+        self.send_header("Content-Length", str(len(body_bytes)))
+        self.end_headers()
+        self.wfile.write(body_bytes)
+
+    def send_emulator_starting(self, html_page=False):
+        if html_page:
+            body_bytes = b"""<!doctype html>
+<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nara Gaiden</title></head>
+<body><p>Starting the Android emulator&hellip;</p></body></html>"""
+            content_type = "text/html; charset=utf-8"
+        else:
+            body_bytes = b"Starting the Android emulator"
+            content_type = "text/plain; charset=utf-8"
+        self.send_response(503)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Retry-After", "5")
         self.send_header("Content-Length", str(len(body_bytes)))
         self.end_headers()
         self.wfile.write(body_bytes)
@@ -5264,6 +5774,9 @@ class Handler(BaseHTTPRequestHandler):
             server = cast(NaraServer, self.server)
             if parsed.path == "/events":
                 self.send_event_stream(server)
+                return
+            if getattr(server, "emulator_avd", None) and not server.emulator_ready.is_set():
+                self.send_emulator_starting(html_page=parsed.path != "/json")
                 return
             data, _is_stale = fetch_live_data(server)
             latest_feed = latest_by_group(data.get("events", []), "FEED")
@@ -5355,9 +5868,22 @@ def main():
         dest="adb_device",
         default=os.environ.get("ADB_DEVICE") or os.environ.get("ANDROID_SERIAL"),
     )
+    parser.add_argument(
+        "--emulator-avd",
+        dest="emulator_avd",
+        default=os.environ.get("NARA_EMULATOR_AVD"),
+        help="AVD to launch and supervise (disabled when omitted)",
+    )
+    parser.add_argument(
+        "--emulator-path",
+        dest="emulator_path",
+        default=None,
+        help="path to the Android emulator executable",
+    )
     parser.add_argument("--host", dest="host", default=os.environ.get("NARA_HOST") or "127.0.0.1")
     parser.add_argument("--port", dest="port", type=int, default=int(os.environ.get("NARA_PORT") or "8787"))
     args = parser.parse_args()
+    args.adb_path = resolve_adb_path(args.adb_path)
 
     server_password = os.environ.get("NARA_PASSWORD")
 
@@ -5391,9 +5917,39 @@ def main():
     server.inotify_status = "starting"
     server.auth_failures = {}
     server.password_hash = password_digest(server_password) if server_password else None
+    server.emulator_avd = args.emulator_avd
+    server.emulator_path = None
+    server.emulator_args = list(DEFAULT_EMULATOR_ARGS)
+    server.emulator_app_package = os.environ.get(
+        "NARA_APP_PACKAGE", DEFAULT_NARA_APP_PACKAGE
+    )
+    server.emulator_check_interval = DEFAULT_EMULATOR_CHECK_INTERVAL_SECONDS
+    server.emulator_failure_threshold = DEFAULT_EMULATOR_FAILURE_THRESHOLD
+    server.emulator_boot_timeout = DEFAULT_EMULATOR_BOOT_TIMEOUT_SECONDS
+    if server.emulator_avd:
+        server.emulator_path = args.emulator_path or resolve_emulator_path(args.adb_path)
+        server.emulator_args = configured_emulator_args()
+        server.emulator_check_interval = positive_float_setting(
+            "NARA_EMULATOR_CHECK_INTERVAL", DEFAULT_EMULATOR_CHECK_INTERVAL_SECONDS
+        )
+        server.emulator_failure_threshold = positive_int_setting(
+            "NARA_EMULATOR_FAILURE_THRESHOLD", DEFAULT_EMULATOR_FAILURE_THRESHOLD
+        )
+        server.emulator_boot_timeout = positive_float_setting(
+            "NARA_EMULATOR_BOOT_TIMEOUT", DEFAULT_EMULATOR_BOOT_TIMEOUT_SECONDS
+        )
+    server.emulator_process = None
+    server.emulator_process_lock = threading.Lock()
+    server.emulator_boot_started_at = None
+    server.emulator_ready = threading.Event()
+    server.emulator_check_wakeup = threading.Event()
+    server.live_data_ready = threading.Event()
+    server.emulator_owned = False
+    server.emulator_adopted = False
 
     print(f"Serving on http://{args.host}:{args.port}")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    start_emulator_supervisor(server)
     start_live_updates(server)
     try:
         server.serve_forever()
@@ -5401,6 +5957,7 @@ def main():
         logging.info("Stopping server")
     finally:
         server.server_close()
+        print_adopted_emulator_stop_message(server)
 
 
 if __name__ == "__main__":

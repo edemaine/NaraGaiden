@@ -29,9 +29,15 @@ def output_text(value):
     return str(value).strip()
 
 
-def run(cmd, timeout=None):
+def run(cmd, timeout=None, **subprocess_options):
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            **subprocess_options,
+        )
     except subprocess.TimeoutExpired as exc:
         details = []
         stdout = output_text(exc.stdout)

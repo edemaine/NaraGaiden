@@ -60,6 +60,7 @@ class LiveUpdateTest(unittest.TestCase):
             inotify_generation=0,
             cache_dirty=False,
             inotify_status="starting",
+            emulator_check_wakeup=threading.Event(),
             change_condition=threading.Condition(),
             data_revision=0,
             sse_client_count=2,
@@ -147,6 +148,7 @@ class LiveUpdateTest(unittest.TestCase):
 
         self.assertEqual(start.call_count, 2)
         self.assertNotEqual(server.inotify_status, "disabled")
+        self.assertTrue(server.emulator_check_wakeup.is_set())
 
     @mock.patch("nara_web.fetch_live_data")
     def test_inotify_refreshes_and_publishes_revision(self, fetch):
@@ -260,6 +262,62 @@ class LiveUpdateTest(unittest.TestCase):
         self.assertIn('addEventListener("changed", refreshContent)', page)
 
     @mock.patch("nara_web.fetch_live_data")
+    def test_request_during_supervised_startup_returns_starting_page(self, fetch):
+        handler = SimpleNamespace(
+            path="/",
+            headers={},
+            server=SimpleNamespace(
+                password_hash=None,
+                emulator_avd="Nara_Tablet",
+                emulator_ready=threading.Event(),
+            ),
+            send_emulator_starting=mock.Mock(),
+        )
+
+        nara_web.Handler.do_GET(handler)
+
+        handler.send_emulator_starting.assert_called_once_with(html_page=True)
+        fetch.assert_not_called()
+
+    def test_sse_ready_event_waits_for_first_live_data(self):
+        live_data_ready = threading.Event()
+        inotify_stop = threading.Event()
+        change_condition = mock.MagicMock()
+
+        def finish_startup(_timeout):
+            live_data_ready.set()
+            return True
+
+        def finish_stream(*_args, **_kwargs):
+            inotify_stop.set()
+            return True
+
+        live_data_ready.wait = mock.Mock(side_effect=finish_startup)
+        change_condition.wait_for.side_effect = finish_stream
+        server = SimpleNamespace(
+            change_condition=change_condition,
+            sse_client_count=0,
+            data_revision=0,
+            inotify_stop=inotify_stop,
+            emulator_avd="Nara_Tablet",
+            live_data_ready=live_data_ready,
+        )
+        handler = SimpleNamespace(
+            wfile=io.BytesIO(),
+            send_response=mock.Mock(),
+            send_header=mock.Mock(),
+            end_headers=mock.Mock(),
+        )
+
+        nara_web.Handler.send_event_stream(handler, server)
+
+        stream = handler.wfile.getvalue().decode("utf-8")
+        self.assertLess(
+            stream.index(": waiting for Android emulator"),
+            stream.index("event: ready"),
+        )
+
+    @mock.patch("nara_web.fetch_live_data")
     def test_json_generated_at_is_response_time_not_cached_snapshot_time(self, fetch):
         fetch.return_value = (
             {
@@ -284,6 +342,242 @@ class LiveUpdateTest(unittest.TestCase):
 
         payload = json.loads(handler.wfile.getvalue())
         self.assertEqual(payload["generatedAt"], 1785510123456)
+
+
+class EmulatorSupervisorTest(unittest.TestCase):
+    def make_server(self, process=None):
+        return SimpleNamespace(
+            adb_path="adb",
+            adb_device="emulator-5554",
+            emulator_avd="Nara_Tablet",
+            emulator_path="emulator",
+            emulator_args=["-no-window"],
+            emulator_app_package="com.naraorganics.nara",
+            emulator_check_interval=0,
+            emulator_failure_threshold=2,
+            emulator_boot_timeout=180,
+            emulator_process=process,
+            emulator_process_lock=threading.Lock(),
+            emulator_boot_started_at=None,
+            emulator_ready=threading.Event(),
+            emulator_check_wakeup=threading.Event(),
+            inotify_stop=threading.Event(),
+            emulator_owned=process is not None,
+            emulator_adopted=False,
+            change_condition=threading.Condition(),
+            live_data_ready=threading.Event(),
+            shutdown=mock.Mock(),
+        )
+
+    def test_emulator_arguments_default_to_headless(self):
+        with mock.patch.dict(nara_web.os.environ, {}, clear=True):
+            self.assertEqual(
+                nara_web.configured_emulator_args(),
+                ["-no-window", "-no-audio", "-no-boot-anim"],
+            )
+
+    def test_empty_emulator_arguments_restore_normal_ui(self):
+        with mock.patch.dict(
+            nara_web.os.environ, {"NARA_EMULATOR_ARGS": ""}, clear=True
+        ):
+            self.assertEqual(nara_web.configured_emulator_args(), [])
+
+    def test_prints_stop_command_for_adopted_emulator(self):
+        server = self.make_server()
+        server.emulator_adopted = True
+
+        with mock.patch("builtins.print") as print_message:
+            nara_web.print_adopted_emulator_stop_message(server)
+
+        self.assertEqual(print_message.call_count, 2)
+        self.assertIn("already running", print_message.call_args_list[0].args[0])
+        self.assertIn(
+            "adb -s emulator-5554 emu kill",
+            print_message.call_args_list[1].args[0],
+        )
+
+    def test_does_not_print_stop_command_for_managed_emulator(self):
+        server = self.make_server()
+
+        with mock.patch("builtins.print") as print_message:
+            nara_web.print_adopted_emulator_stop_message(server)
+
+        print_message.assert_not_called()
+
+    @mock.patch("nara_web.adb_supervisor_run")
+    def test_watchdog_gets_boot_and_foreground_state_in_one_adb_call(self, adb_run):
+        server = self.make_server()
+        adb_run.return_value = (
+            "NARA_BOOT=1\n"
+            "mResumedActivity: ActivityRecord{abc u0 "
+            "com.naraorganics.nara/.MainActivity t42}\n"
+        )
+
+        problem, package = nara_web.emulator_watchdog_status(server)
+
+        self.assertIsNone(problem)
+        self.assertEqual(package, "com.naraorganics.nara")
+        adb_run.assert_called_once_with(
+            server, "shell", nara_web.ANDROID_WATCHDOG_COMMAND
+        )
+
+    @mock.patch("nara_web.adb_supervisor_run")
+    def test_finds_resumed_android_package(self, adb_run):
+        adb_run.return_value = (
+            "NARA_BOOT=1\n"
+            "mResumedActivity: ActivityRecord{abc u0 "
+            "com.naraorganics.nara/.MainActivity t42}\n"
+        )
+
+        package = nara_web.foreground_android_package(self.make_server())
+
+        self.assertEqual(package, "com.naraorganics.nara")
+
+    @mock.patch("nara_web.threading.Thread")
+    @mock.patch("nara_web.run")
+    @mock.patch("nara_web.subprocess.Popen")
+    def test_starts_configured_avd_with_extra_arguments(self, popen, run, thread):
+        server = self.make_server()
+        popen.return_value.poll.return_value = None
+
+        nara_web.start_managed_emulator(server)
+
+        if nara_web.sys.platform == "cygwin":
+            popen.assert_not_called()
+            command = run.call_args.args[0]
+            self.assertEqual(command[1:], [
+                "--hide", "emulator", "-avd", "Nara_Tablet", "-no-window"
+            ])
+            self.assertIs(run.call_args.kwargs["stdin"], nara_web.subprocess.DEVNULL)
+            self.assertTrue(run.call_args.kwargs["start_new_session"])
+            self.assertIsNone(server.emulator_process)
+            self.assertTrue(server.emulator_owned)
+            thread.assert_not_called()
+            return
+
+        self.assertEqual(
+            popen.call_args.args[0],
+            ["emulator", "-avd", "Nara_Tablet", "-no-window"],
+        )
+        self.assertIs(server.emulator_process, popen.return_value)
+        options = popen.call_args.kwargs
+        if nara_web.os.name == "nt":
+            self.assertEqual(
+                options["creationflags"],
+                nara_web.subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            self.assertTrue(options["start_new_session"])
+        self.assertIs(
+            thread.call_args.kwargs["target"],
+            nara_web.managed_emulator_monitor_loop,
+        )
+        thread.return_value.start.assert_called_once_with()
+
+    def test_ctrl_c_exit_from_emulator_stops_server(self):
+        process = mock.Mock()
+        process.poll.return_value = 130
+        server = self.make_server(process)
+
+        with self.assertLogs(level="INFO") as logs:
+            nara_web.managed_emulator_monitor_loop(server, process)
+
+        server.shutdown.assert_called_once_with()
+        self.assertTrue(server.inotify_stop.is_set())
+        self.assertIn("Ctrl-C interrupted Android emulator", logs.output[0])
+
+    @mock.patch("nara_web.run")
+    def test_stops_native_emulator_after_cygwin_wrapper_exits(self, run):
+        process = mock.Mock()
+        process.poll.return_value = 130
+        server = self.make_server(process)
+
+        nara_web.stop_managed_emulator(server)
+
+        run.assert_called_once_with(
+            ["adb", "-s", "emulator-5554", "emu", "kill"],
+            timeout=5.0,
+        )
+
+    def test_relaunches_nara_when_another_app_is_foreground(self):
+        server = self.make_server()
+
+        def stop_after_launch(_server):
+            server.inotify_stop.set()
+
+        with mock.patch(
+            "nara_web.emulator_watchdog_status",
+            return_value=(None, "com.android.launcher"),
+        ), mock.patch(
+            "nara_web.launch_nara_android_app", side_effect=stop_after_launch
+        ) as launch:
+            nara_web.emulator_supervisor_loop(server)
+
+        launch.assert_called_once_with(server)
+        self.assertTrue(server.emulator_ready.is_set())
+
+    def test_restarts_live_managed_emulator_after_failure_threshold(self):
+        process = mock.Mock()
+        process.poll.return_value = None
+        server = self.make_server(process)
+
+        def stop_after_restart(_server):
+            server.inotify_stop.set()
+
+        with mock.patch(
+            "nara_web.emulator_watchdog_status",
+            return_value=("ADB timed out", None),
+        ), mock.patch(
+            "nara_web.restart_managed_emulator", side_effect=stop_after_restart
+        ) as restart:
+            nara_web.emulator_supervisor_loop(server)
+
+        restart.assert_called_once_with(server)
+
+    def test_waits_for_threshold_if_preexisting_emulator_later_fails(self):
+        server = self.make_server()
+        health_results = iter((None, "ADB timed out", "ADB timed out"))
+
+        def health(_server):
+            return next(health_results), "com.naraorganics.nara"
+
+        def stop_after_restart(_server):
+            server.inotify_stop.set()
+
+        with mock.patch("nara_web.emulator_watchdog_status", side_effect=health), mock.patch(
+            "nara_web.start_managed_emulator"
+        ) as start, mock.patch(
+            "nara_web.restart_managed_emulator", side_effect=stop_after_restart
+        ) as restart:
+            nara_web.emulator_supervisor_loop(server)
+
+        start.assert_not_called()
+        restart.assert_called_once_with(server)
+
+    def test_does_not_restart_managed_emulator_during_boot_grace(self):
+        process = mock.Mock()
+        process.poll.return_value = None
+        server = self.make_server(process)
+        server.emulator_boot_started_at = 100
+        server.emulator_check_interval = 60
+
+        def stop_after_wait(_timeout):
+            server.inotify_stop.set()
+            return True
+
+        server.emulator_check_wakeup.wait = mock.Mock(side_effect=stop_after_wait)
+        with mock.patch(
+            "nara_web.emulator_watchdog_status",
+            return_value=(nara_web.EMULATOR_BOOTING_PROBLEM, None),
+        ), mock.patch("nara_web.time.monotonic", return_value=110), mock.patch(
+            "nara_web.restart_managed_emulator"
+        ) as restart:
+            nara_web.emulator_supervisor_loop(server)
+
+        restart.assert_not_called()
+        server.emulator_check_wakeup.wait.assert_called_once_with(
+            nara_web.EMULATOR_STARTUP_CHECK_INTERVAL_SECONDS
+        )
 
 
 if __name__ == "__main__":
