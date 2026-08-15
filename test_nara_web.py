@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import nara_live_export
 import nara_web
 from nara_web import build_html, build_json
 
@@ -29,6 +30,23 @@ class BuildJsonTest(unittest.TestCase):
         self.assertIsInstance(child["feed"]["beginDt"], int)
         self.assertIsInstance(child["diaper"]["beginDt"], int)
         self.assertIsInstance(child["lastPoopDiaperBeginDt"], int)
+
+
+class CommandRunTest(unittest.TestCase):
+    @mock.patch("nara_live_export.subprocess.run")
+    def test_commands_do_not_inherit_terminal_stdin(self, subprocess_run):
+        subprocess_run.return_value = SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="",
+        )
+
+        nara_live_export.run(["adb", "devices"])
+
+        self.assertIs(
+            subprocess_run.call_args.kwargs["stdin"],
+            nara_live_export.subprocess.DEVNULL,
+        )
 
 
 class LiveUpdateTest(unittest.TestCase):
@@ -448,7 +466,6 @@ class EmulatorSupervisorTest(unittest.TestCase):
             self.assertEqual(command[1:], [
                 "--hide", "emulator", "-avd", "Nara_Tablet", "-no-window"
             ])
-            self.assertIs(run.call_args.kwargs["stdin"], nara_web.subprocess.DEVNULL)
             self.assertTrue(run.call_args.kwargs["start_new_session"])
             self.assertIsNone(server.emulator_process)
             self.assertTrue(server.emulator_owned)

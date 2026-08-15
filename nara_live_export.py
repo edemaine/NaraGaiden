@@ -30,6 +30,7 @@ def output_text(value):
 
 
 def run(cmd, timeout=None, **subprocess_options):
+    subprocess_options.setdefault("stdin", subprocess.DEVNULL)
     try:
         result = subprocess.run(
             cmd,

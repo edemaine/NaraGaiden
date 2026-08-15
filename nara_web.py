@@ -5003,7 +5003,6 @@ def start_managed_emulator(server):
         run(
             [cygstart_path, "--hide", *command],
             timeout=adb_timeout_seconds(),
-            stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
         with server.emulator_process_lock:
