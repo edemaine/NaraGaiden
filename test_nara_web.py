@@ -32,6 +32,53 @@ class BuildJsonTest(unittest.TestCase):
         self.assertIsInstance(child["lastPoopDiaperBeginDt"], int)
 
 
+class RoutineIndicatorTest(unittest.TestCase):
+    def test_web_status_icon_includes_routine_note_and_time(self):
+        child_key = "child"
+        begin_dt = 1787413500000
+        medication = {
+            "trackGroupKey": "ROUTINE",
+            "childKey": child_key,
+            "beginDt": begin_dt,
+            "note": "2.5 mL & rest",
+            "payload": {"routineName": 'Pain "medicine"'},
+        }
+
+        page = build_html(
+            latest_feed={child_key: {"beginDt": begin_dt}},
+            latest_diaper={},
+            latest_poopy_diapers_map={},
+            child_map={child_key: "Child"},
+            generated_at=begin_dt,
+            medications={child_key: [medication]},
+        )
+
+        expected_time = nara_web.format_routine_event_time(begin_dt)
+        self.assertIn('class="status-icon"', page)
+        self.assertIn("Pain &quot;medicine&quot;", page)
+        self.assertIn("Note: 2.5 mL &amp; rest", page)
+        self.assertIn(f"When: {expected_time}", page)
+
+    def test_routine_count_api_remains_numeric(self):
+        child_key = "child"
+        now_ms = 1787413500000
+        midnight_ms = nara_web.local_midnight_ms(now_ms)
+        events = [
+            {
+                "trackGroupKey": "ROUTINE",
+                "childKey": child_key,
+                "beginDt": midnight_ms + offset,
+                "payload": {"routineName": "Medication"},
+            }
+            for offset in (1000, 2000)
+        ]
+
+        self.assertEqual(
+            nara_web.routine_counts_today(events, ["medication"], now_ms),
+            {child_key: 2},
+        )
+
+
 class CommandRunTest(unittest.TestCase):
     @mock.patch("nara_live_export.subprocess.run")
     def test_commands_do_not_inherit_terminal_stdin(self, subprocess_run):

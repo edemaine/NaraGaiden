@@ -519,7 +519,7 @@ def local_midnight_ms(now_ms=None):
     return int(midnight_sec * 1000)
 
 
-def routine_counts_today(events, keywords, now_ms=None):
+def routine_events_today(events, keywords, now_ms=None):
     if now_ms is None:
         now_ms = int(time.time() * 1000)
     midnight_ms = local_midnight_ms(now_ms)
@@ -539,8 +539,54 @@ def routine_counts_today(events, keywords, now_ms=None):
         child_key = ev.get("childKey")
         if not child_key:
             continue
-        result[child_key] = result.get(child_key, 0) + 1
+        result.setdefault(child_key, []).append(ev)
+    for child_events in result.values():
+        child_events.sort(key=lambda ev: int(ev.get("beginDt") or 0))
     return result
+
+
+def routine_counts_today(events, keywords, now_ms=None):
+    return {
+        child_key: len(child_events)
+        for child_key, child_events in routine_events_today(events, keywords, now_ms).items()
+    }
+
+
+def routine_event_note(ev):
+    payload = ev.get("payload") or {}
+    for value in (ev.get("note"), payload.get("note")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def format_routine_event_time(timestamp_ms):
+    if timestamp_ms is None:
+        return "Unknown time"
+    local = time.localtime(int(timestamp_ms) / 1000.0)
+    clock = time.strftime("%I:%M %p", local).lstrip("0")
+    return f'{time.strftime("%Y-%m-%d", local)} at {clock}'
+
+
+def routine_indicator_html(value, icon_html, fallback_name):
+    if isinstance(value, (list, tuple)):
+        indicators = []
+        for ev in value:
+            payload = ev.get("payload") or {}
+            routine_name = str(payload.get("routineName") or fallback_name).strip()
+            lines = [routine_name or fallback_name]
+            note = routine_event_note(ev)
+            if note:
+                lines.append(f"Note: {note}")
+            lines.append(f'When: {format_routine_event_time(ev.get("beginDt"))}')
+            tooltip = "\n".join(lines)
+            escaped_tooltip = html.escape(tooltip, quote=True)
+            indicators.append(
+                f'<span class="status-icon" title="{escaped_tooltip}" '
+                f'aria-label="{escaped_tooltip}">{icon_html}</span>'
+            )
+        return "".join(indicators)
+    return icon_html * int(value or 0)
 
 
 def feed_label(ev):
@@ -806,14 +852,13 @@ def build_body(
         name_html = html.escape(name)
         poopy_diaper_ev = latest_poopy_diapers_map.get(child_key)
         alert_text = poop_alert_text(name, poopy_diaper_ev.get("beginDt") if poopy_diaper_ev else None, now_ms)
-        vitamin_count = int(vitamins.get(child_key, 0) or 0)
-        medication_count = int(medications.get(child_key, 0) or 0)
-        bath_count = int(baths.get(child_key, 0) or 0)
         indicators = (
             (ALERT_ICON_HTML if alert_text else "")
-            + ("&#128138;" * vitamin_count)
-            + ("&#128137;" * medication_count)
-            + ("&#128705;" * bath_count)
+            + routine_indicator_html(vitamins.get(child_key, 0), "&#128138;", "Vitamin")
+            + routine_indicator_html(
+                medications.get(child_key, 0), "&#128137;", "Medication"
+            )
+            + routine_indicator_html(baths.get(child_key, 0), "&#128705;", "Bath")
         )
         if indicators:
             name_html += f" {indicators}"
@@ -924,6 +969,9 @@ def build_html(
       font-size: 1.35em;
       font-weight: 700;
       animation: stale-age-pulse 1.8s ease-in-out infinite;
+    }
+    .status-icon {
+      cursor: help;
     }
     .actions {
       display: flex;
@@ -5784,10 +5832,15 @@ class Handler(BaseHTTPRequestHandler):
             # "as of" describes this successful response, not when the cached
             # database snapshot last changed.
             generated_at = int(time.time() * 1000)
-            vitamins = routine_counts_today(data.get("events", []), ["vitamin"])
-            medications = routine_counts_today(data.get("events", []), ["medication", "medicine"])
-            baths = routine_counts_today(data.get("events", []), ["bath"])
+            vitamin_events = routine_events_today(data.get("events", []), ["vitamin"])
+            medication_events = routine_events_today(
+                data.get("events", []), ["medication", "medicine"]
+            )
+            bath_events = routine_events_today(data.get("events", []), ["bath"])
             if parsed.path == "/json":
+                vitamins = {key: len(events) for key, events in vitamin_events.items()}
+                medications = {key: len(events) for key, events in medication_events.items()}
+                baths = {key: len(events) for key, events in bath_events.items()}
                 payload = build_json(
                     latest_feed,
                     latest_diaper,
@@ -5831,9 +5884,9 @@ class Handler(BaseHTTPRequestHandler):
                 data.get("children", {}),
                 generated_at,
                 body_class,
-                vitamins,
-                medications,
-                baths,
+                vitamin_events,
+                medication_events,
+                bath_events,
             )
             body_bytes = html_body.encode("utf-8")
             self.send_response(200)

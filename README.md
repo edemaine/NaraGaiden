@@ -32,6 +32,7 @@ Set `NARA_PASSWORD` in the environment or a local `.env` file if you want protec
   * 💉 for medication
   * 🛁 for baths
   * Repeat multiple times if given multiple times in the day
+  * Hover over an emoji to see the routine name, note, and recorded time
 * Updates immediately when the emulator database changes, and every minute
 
 Open with `chrome --app=http://192.168.2.1:8888`
