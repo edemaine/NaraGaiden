@@ -1040,6 +1040,7 @@ def build_html(
     let lastSuccessMs = Date.now();
     let staleActive = false;
     let refreshPromise = null;
+    let refreshQueued = false;
 
     function openCleanWindow() {
       const features = "toolbar=no,location=no,menubar=no,scrollbars=yes,resizable=yes";
@@ -1083,11 +1084,7 @@ def build_html(
       renderMeta(suffix);
     }
 
-    async function refreshContent() {
-      if (refreshPromise) {
-        return refreshPromise;
-      }
-      refreshPromise = (async () => {
+    async function refreshContentOnce() {
       try {
         const url = new URL(window.location.href);
         url.searchParams.set("_", Date.now().toString());
@@ -1120,10 +1117,22 @@ def build_html(
         staleActive = true;
         updateStaleNote();
         console.warn("Refresh error", err);
-      } finally {
-        refreshPromise = null;
       }
-      })();
+    }
+
+    function refreshContent() {
+      if (refreshPromise) {
+        refreshQueued = true;
+        return refreshPromise;
+      }
+      refreshQueued = false;
+      refreshPromise = refreshContentOnce().finally(() => {
+        refreshPromise = null;
+        if (refreshQueued) {
+          refreshQueued = false;
+          refreshContent();
+        }
+      });
       return refreshPromise;
     }
 
@@ -4863,6 +4872,7 @@ class NaraServer(ThreadingHTTPServer):
     inotify_process: Optional[subprocess.Popen]
     inotify_process_lock: threading.Lock
     inotify_debounce_lock: threading.Lock
+    inotify_refresh_lock: threading.Lock
     inotify_debounce_timer: Optional[threading.Timer]
     inotify_generation: int
     cache_dirty: bool
@@ -5484,27 +5494,31 @@ def publish_live_change(server):
 
 
 def refresh_after_inotify(server, generation):
-    with server.inotify_debounce_lock:
-        if generation != server.inotify_generation or server.inotify_stop.is_set():
+    # A Timer that has already fired cannot be cancelled. Serialize callbacks
+    # and recheck their generation after they get the lock so an Android sync
+    # cannot build up a queue of obsolete database pulls and notifications.
+    with server.inotify_refresh_lock:
+        with server.inotify_debounce_lock:
+            if generation != server.inotify_generation or server.inotify_stop.is_set():
+                return
+            server.inotify_debounce_timer = None
+            cache_dirty = server.cache_dirty
+        if cache_dirty:
+            logging.info("Android database changed; refreshing")
+        else:
+            logging.info("Android database change already refreshed by a client request")
+        try:
+            fetch_live_data(server)
+        except Exception:
+            logging.exception("Failed to refresh data after Android database change")
             return
-        server.inotify_debounce_timer = None
-        cache_dirty = server.cache_dirty
-    if cache_dirty:
-        logging.info("Android database changed; refreshing")
-    else:
-        logging.info("Android database change already refreshed by a client request")
-    try:
-        fetch_live_data(server)
-    except Exception:
-        logging.exception("Failed to refresh data after Android database change")
-        return
-    revision, client_count = publish_live_change(server)
-    logging.info(
-        "Notifying %d browser%s of revision %d",
-        client_count,
-        "" if client_count == 1 else "s",
-        revision,
-    )
+        revision, client_count = publish_live_change(server)
+        logging.info(
+            "Notifying %d browser%s of revision %d",
+            client_count,
+            "" if client_count == 1 else "s",
+            revision,
+        )
 
 
 def schedule_inotify_refresh(server):
@@ -5963,6 +5977,7 @@ def main():
     server.inotify_process = None
     server.inotify_process_lock = threading.Lock()
     server.inotify_debounce_lock = threading.Lock()
+    server.inotify_refresh_lock = threading.Lock()
     server.inotify_debounce_timer = None
     server.inotify_generation = 0
     server.cache_dirty = False

@@ -109,6 +109,7 @@ class LiveUpdateTest(unittest.TestCase):
             cache_lock=threading.Lock(),
             db_signature="same",
             inotify_debounce_lock=threading.Lock(),
+            inotify_refresh_lock=threading.Lock(),
             inotify_generation=0,
             cache_dirty=False,
         )
@@ -121,6 +122,7 @@ class LiveUpdateTest(unittest.TestCase):
             inotify_process=None,
             inotify_process_lock=threading.Lock(),
             inotify_debounce_lock=threading.Lock(),
+            inotify_refresh_lock=threading.Lock(),
             inotify_debounce_timer=None,
             inotify_generation=0,
             cache_dirty=False,
@@ -231,6 +233,26 @@ class LiveUpdateTest(unittest.TestCase):
         self.assertIn("Android database changed; refreshing", logs.output[0])
         self.assertIn("Notifying 2 browsers of revision 1", logs.output[1])
 
+    @mock.patch("nara_web.fetch_live_data")
+    def test_queued_obsolete_inotify_refresh_is_discarded(self, fetch):
+        server = self.make_inotify_server()
+        server.inotify_generation = 4
+        server.cache_dirty = True
+
+        class AdvanceGenerationBeforeLock:
+            def __enter__(self):
+                with server.inotify_debounce_lock:
+                    server.inotify_generation = 5
+
+            def __exit__(self, *_args):
+                return False
+
+        server.inotify_refresh_lock = AdvanceGenerationBeforeLock()
+        nara_web.refresh_after_inotify(server, 4)
+
+        fetch.assert_not_called()
+        self.assertEqual(server.data_revision, 0)
+
     @mock.patch("nara_web.adb_pull")
     def test_debounce_only_publishes_when_client_already_refreshed(self, adb_pull):
         server = self.make_cache_server()
@@ -325,6 +347,8 @@ class LiveUpdateTest(unittest.TestCase):
         self.assertIn('new EventSource("/events")', page)
         self.assertIn('addEventListener("ready", refreshContent)', page)
         self.assertIn('addEventListener("changed", refreshContent)', page)
+        self.assertIn("refreshQueued = true", page)
+        self.assertIn("if (refreshQueued)", page)
 
     @mock.patch("nara_web.fetch_live_data")
     def test_request_during_supervised_startup_returns_starting_page(self, fetch):
